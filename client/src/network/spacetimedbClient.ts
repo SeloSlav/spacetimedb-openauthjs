@@ -7,7 +7,7 @@ import { DbConnection } from "../generated/index.ts";
 
 const isDev = import.meta.env.DEV || window.location.hostname === "localhost";
 const SPACETIME_URI = isDev ? "http://localhost:3000" : "https://maincloud.spacetimedb.com";
-const DB_NAME = isDev ? "local-db" : "production-db";
+const DB_NAME = isDev ? "spacetimedb-auth-demo-local" : "spacetimedb-auth-demo";
 
 let connection: DbConnection | null = null;
 let connectionToken: string | null = null;
@@ -22,8 +22,10 @@ export function connect(
   onConnectError?: (error: unknown) => void,
   onDisconnect?: () => void
 ): DbConnection {
-  // Reuse only while the connection is still active.
-  if (connection && connectionToken === token && connectionStatus !== "disconnected") {
+  // Reuse only a fully connected instance for the same token.
+  // Never reuse "connecting" instances: they can carry stale callbacks
+  // from an earlier mount/effect and lead to ghost sessions.
+  if (connection && connectionToken === token && connectionStatus === "connected") {
     const conn = connection as { identity?: import("spacetimedb").Identity };
     if (conn.identity && onIdentity) onIdentity(conn.identity);
     return connection;

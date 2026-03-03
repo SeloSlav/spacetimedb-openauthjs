@@ -24,10 +24,18 @@ export interface PasswordResetToken {
   used: boolean;
 }
 
+export interface RefreshTokenRecord {
+  token: string;
+  userId: string;
+  clientId: string;
+  expiresAt: Date;
+}
+
 interface JsonStorage {
   users: UserRecord[];
   codes: { code: string; data: AuthCodeData; expiresAt: number }[];
   resetTokens: { token: string; userId: string; email: string; expiresAt: number; used: boolean }[];
+  refreshTokens: { token: string; userId: string; clientId: string; expiresAt: number }[];
 }
 
 class DatabaseService {
@@ -54,7 +62,7 @@ class DatabaseService {
   private initJsonStorage() {
     // Only create/use JSON file in development mode
     if (!fs.existsSync(this.jsonFilePath)) {
-      const initialData: JsonStorage = { users: [], codes: [], resetTokens: [] };
+      const initialData: JsonStorage = { users: [], codes: [], resetTokens: [], refreshTokens: [] };
       fs.writeFileSync(this.jsonFilePath, JSON.stringify(initialData, null, 2));
       console.log('[Database] Created users.json file for development');
     } else {
@@ -66,14 +74,12 @@ class DatabaseService {
     try {
       const data = fs.readFileSync(this.jsonFilePath, 'utf8');
       const parsed = JSON.parse(data);
-      // Ensure resetTokens array exists for backward compatibility
-      if (!parsed.resetTokens) {
-        parsed.resetTokens = [];
-      }
+      if (!parsed.resetTokens) parsed.resetTokens = [];
+      if (!parsed.refreshTokens) parsed.refreshTokens = [];
       return parsed;
     } catch (error) {
       console.warn('[Database] Failed to read users.json, creating new file');
-      const initialData: JsonStorage = { users: [], codes: [], resetTokens: [] };
+      const initialData: JsonStorage = { users: [], codes: [], resetTokens: [], refreshTokens: [] };
       this.writeJsonStorage(initialData);
       return initialData;
     }
@@ -117,9 +123,19 @@ class DatabaseService {
       )
     `;
 
+    await this.sql`
+      CREATE TABLE IF NOT EXISTS refresh_tokens (
+        token VARCHAR(128) PRIMARY KEY,
+        user_id VARCHAR(36) NOT NULL REFERENCES users(user_id),
+        client_id VARCHAR(255) NOT NULL,
+        expires_at TIMESTAMP NOT NULL
+      )
+    `;
+
     // Clean up expired codes and tokens
     await this.sql`DELETE FROM auth_codes WHERE expires_at < CURRENT_TIMESTAMP`;
     await this.sql`DELETE FROM password_reset_tokens WHERE expires_at < CURRENT_TIMESTAMP`;
+    await this.sql`DELETE FROM refresh_tokens WHERE expires_at < CURRENT_TIMESTAMP`;
   }
 
   // User operations
@@ -338,6 +354,73 @@ class DatabaseService {
     } else {
       const storage = this.readJsonStorage();
       storage.resetTokens = storage.resetTokens.filter(t => t.expiresAt > now.getTime());
+      this.writeJsonStorage(storage);
+    }
+  }
+
+  // Refresh token operations
+  async storeRefreshToken(token: string, userId: string, clientId: string, expiresAt: Date): Promise<void> {
+    if (this.isProduction && this.sql) {
+      await this.sql`
+        INSERT INTO refresh_tokens (token, user_id, client_id, expires_at)
+        VALUES (${token}, ${userId}, ${clientId}, ${expiresAt})
+      `;
+    } else {
+      const storage = this.readJsonStorage();
+      storage.refreshTokens.push({
+        token,
+        userId,
+        clientId,
+        expiresAt: expiresAt.getTime(),
+      });
+      this.writeJsonStorage(storage);
+    }
+  }
+
+  async getRefreshToken(token: string): Promise<RefreshTokenRecord | null> {
+    if (this.isProduction && this.sql) {
+      const result = await this.sql`
+        SELECT token, user_id, client_id, expires_at
+        FROM refresh_tokens
+        WHERE token = ${token} AND expires_at > CURRENT_TIMESTAMP
+      `;
+      if (!result[0]) return null;
+      return {
+        token: result[0].token,
+        userId: result[0].user_id,
+        clientId: result[0].client_id,
+        expiresAt: new Date(result[0].expires_at),
+      };
+    } else {
+      const storage = this.readJsonStorage();
+      const now = Date.now();
+      const found = storage.refreshTokens.find(t => t.token === token && t.expiresAt > now);
+      if (!found) return null;
+      return {
+        token: found.token,
+        userId: found.userId,
+        clientId: found.clientId,
+        expiresAt: new Date(found.expiresAt),
+      };
+    }
+  }
+
+  async deleteRefreshToken(token: string): Promise<void> {
+    if (this.isProduction && this.sql) {
+      await this.sql`DELETE FROM refresh_tokens WHERE token = ${token}`;
+    } else {
+      const storage = this.readJsonStorage();
+      storage.refreshTokens = storage.refreshTokens.filter(t => t.token !== token);
+      this.writeJsonStorage(storage);
+    }
+  }
+
+  async revokeRefreshTokensForUser(userId: string): Promise<void> {
+    if (this.isProduction && this.sql) {
+      await this.sql`DELETE FROM refresh_tokens WHERE user_id = ${userId}`;
+    } else {
+      const storage = this.readJsonStorage();
+      storage.refreshTokens = storage.refreshTokens.filter(t => t.userId !== userId);
       this.writeJsonStorage(storage);
     }
   }

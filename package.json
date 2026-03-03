@@ -1,5 +1,5 @@
 {
-  "name": "selo-empire",
+  "name": "spacetimedb-openauthjs",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -21,15 +21,13 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.1",
-    "spacetimedb": "2.0.1",
-    "three": "^0.183.2"
+    "spacetimedb": "2.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.183.1",
     "@vitejs/plugin-react": "^5.1.1",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",

@@ -1,0 +1,227 @@
+/* Shared auth page styles consumed by auth/ server-rendered pages.
+   Keep all auth visual styles here so edits under client/src/theme
+   propagate across the monorepo. */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: var(--stdb-bg);
+}
+
+body {
+  min-height: 100vh;
+  width: 100%;
+  background-image: url('/login_background.jpg');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-attachment: scroll;
+  font-family: var(--stdb-font);
+  color: var(--stdb-text);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  overflow-x: hidden;
+}
+
+.container {
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(12px);
+  border: var(--stdb-border);
+  border-radius: 16px;
+  padding: 56px 40px;
+  width: 90%;
+  max-width: 460px;
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  text-align: center;
+}
+
+.container h1 {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--stdb-text);
+  margin-bottom: 20px;
+}
+
+.game-title {
+  min-height: 52px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.game-title span {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--stdb-text);
+}
+
+.form-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--stdb-text);
+  margin-bottom: 16px;
+}
+
+.form-description {
+  font-size: 14px;
+  color: var(--stdb-text-muted);
+  margin-bottom: 28px;
+  line-height: 1.5;
+}
+
+.form-group {
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--stdb-text);
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+input[type='email'],
+input[type='password'] {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--stdb-bg-input);
+  border: 1px solid var(--stdb-purple-border);
+  border-radius: 10px;
+  color: var(--stdb-text);
+  font-size: 15px;
+  font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+input[type='email']:focus,
+input[type='password']:focus,
+input:focus {
+  outline: none;
+  border-color: var(--stdb-green);
+  background: #141414;
+  box-shadow: 0 0 0 3px rgba(0, 255, 136, 0.2);
+}
+
+input::placeholder {
+  color: var(--stdb-text-dim);
+}
+
+input:disabled {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.submit-button {
+  width: 100%;
+  padding: 14px 20px;
+  background: var(--stdb-btn-primary-bg);
+  border: none;
+  border-radius: var(--stdb-btn-radius);
+  color: var(--stdb-btn-primary-text);
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--stdb-font);
+  cursor: pointer;
+  transition: var(--stdb-btn-transition);
+  margin-bottom: 26px;
+  box-shadow: var(--stdb-btn-shadow);
+  text-transform: uppercase;
+  letter-spacing: 0.9px;
+}
+
+.submit-button:hover {
+  background: var(--stdb-btn-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--stdb-btn-shadow-hover);
+}
+
+a.submit-button {
+  display: inline-block;
+  width: auto;
+  text-decoration: none;
+  padding: 14px 32px;
+}
+
+.divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(160, 32, 240, 0.7) 50%,
+    transparent 100%
+  );
+  margin: 24px 0;
+}
+
+.form-link {
+  font-size: 14px;
+  color: var(--stdb-text-muted);
+  line-height: 1.5;
+}
+
+.form-link a {
+  color: var(--stdb-green);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.form-link a:hover {
+  color: var(--stdb-btn-primary-hover);
+  text-decoration: underline;
+}
+
+.error-message {
+  background: rgba(255, 80, 80, 0.15);
+  border: 1px solid rgba(255, 80, 80, 0.45);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 18px;
+  font-size: 14px;
+  color: #ff7b7b;
+}
+
+.success-message {
+  background: rgba(0, 255, 136, 0.12);
+  border: 1px solid rgba(0, 255, 136, 0.45);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  color: var(--stdb-green);
+  line-height: 1.5;
+}
+
+.success-icon {
+  font-size: 56px;
+  margin-bottom: 18px;
+  color: var(--stdb-green);
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: 34px 24px;
+    margin: 16px;
+  }
+
+  .game-title span {
+    font-size: 21px;
+  }
+}

@@ -8,22 +8,33 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import { connect, disconnect, getConnection } from "../network/spacetimedbClient.ts";
 import { DbConnection } from "../generated/index.ts";
 
+export interface OnlineUser {
+  username: string | null;
+  identity: string;
+}
+
 interface SpacetimeDBContextType {
   connection: DbConnection | null;
   myUsername: string | null;
+  myBio: string | null;
   isConnected: boolean;
   isLoading: boolean;
   setUsernameError: string | null;
+  onlineUsers: OnlineUser[];
   setUsername: (username: string) => Promise<void>;
+  setBio: (bio: string) => Promise<void>;
 }
 
 const SpacetimeDBContext = createContext<SpacetimeDBContextType>({
   connection: null,
   myUsername: null,
+  myBio: null,
   isConnected: false,
   isLoading: true,
   setUsernameError: null,
+  onlineUsers: [],
   setUsername: async () => {},
+  setBio: async () => {},
 });
 
 interface SpacetimeDBProviderProps {
@@ -32,8 +43,11 @@ interface SpacetimeDBProviderProps {
 }
 
 export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProviderProps) {
+  const MAX_RECONNECT_ATTEMPTS = 5;
   const [connection, setConnection] = useState<DbConnection | null>(null);
   const [myUsername, setMyUsername] = useState<string | null>(null);
+  const [myBio, setMyBio] = useState<string | null>(null);
+  const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [setUsernameError, setSetUsernameError] = useState<string | null>(null);
 
@@ -53,11 +67,25 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
     }
   }, []);
 
+  const setBio = useCallback(async (bio: string) => {
+    const conn = getConnection();
+    if (!conn) return;
+    setSetUsernameError(null);
+    try {
+      await conn.reducers.setBio({ bio });
+      setMyBio(bio.trim() || null);
+    } catch (e) {
+      setSetUsernameError(e instanceof Error ? e.message : "Failed to update bio");
+    }
+  }, []);
+
   useEffect(() => {
     if (!authToken) {
       disconnect();
       setConnection(null);
       setMyUsername(null);
+      setMyBio(null);
+      setOnlineUsers([]);
       setIsLoading(false);
       return;
     }
@@ -67,27 +95,38 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
     let myIdentity: import("spacetimedb").Identity | null = null;
     let hasAppliedUserSnapshot = false;
     let profileLoadTimeout: ReturnType<typeof setTimeout> | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
 
-    function lookupMyUsername(
-      c: DbConnection,
-      id: import("spacetimedb").Identity
-    ): string | null {
-      const userTable = (c.db as unknown as { user?: { iter: () => Iterable<{ identity: { toHexString: () => string }; username?: string | null }> } }).user;
+    type UserRow = { identity: { toHexString: () => string }; username?: string | null; bio?: string | null; online?: boolean };
+    function lookupMyProfile(c: DbConnection, id: import("spacetimedb").Identity): { username: string | null; bio: string | null } | null {
+      const userTable = (c.db as unknown as { user?: { iter: () => Iterable<UserRow> } }).user;
       if (!userTable) return null;
       for (const row of userTable.iter()) {
         if (row.identity.toHexString() === id.toHexString()) {
-          return row.username ?? null;
+          return { username: row.username ?? null, bio: row.bio ?? null };
         }
       }
       return null;
     }
+    function refreshOnlineUsers(c: DbConnection) {
+      const userTable = (c.db as unknown as { user?: { iter: () => Iterable<UserRow> } }).user;
+      if (!userTable) return;
+      const users: OnlineUser[] = [];
+      for (const row of userTable.iter()) {
+        if (row.online) {
+          users.push({ username: row.username ?? null, identity: row.identity.toHexString() });
+        }
+      }
+      setOnlineUsers(users);
+    }
 
     function resolveUsernameFromDb(conn: DbConnection): void {
       if (cancelled || !myIdentity) return;
-      const username = lookupMyUsername(conn, myIdentity);
-      // If username exists, we're done immediately.
-      if (username !== null) {
-        setMyUsername(username);
+      const profile = lookupMyProfile(conn, myIdentity);
+      if (profile !== null) {
+        setMyUsername(profile.username);
+        setMyBio(profile.bio);
         setIsLoading(false);
         if (profileLoadTimeout) {
           clearTimeout(profileLoadTimeout);
@@ -95,10 +134,9 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
         }
         return;
       }
-
-      // If the user snapshot was fully applied and still no username row, this is a new player.
       if (hasAppliedUserSnapshot) {
         setMyUsername(null);
+        setMyBio(null);
         setIsLoading(false);
         if (profileLoadTimeout) {
           clearTimeout(profileLoadTimeout);
@@ -107,18 +145,48 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
       }
     }
 
+    function clearTimers() {
+      if (profileLoadTimeout) {
+        clearTimeout(profileLoadTimeout);
+        profileLoadTimeout = null;
+      }
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+    }
+
+    function scheduleReconnect(reason: string) {
+      if (cancelled || reconnectTimeout) return;
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        setSetUsernameError(`Connection error: ${reason}. Please try again.`);
+        setIsLoading(false);
+        return;
+      }
+      const attempt = reconnectAttempts + 1;
+      const delayMs = Math.min(500 * 2 ** reconnectAttempts, 4000);
+      reconnectAttempts = attempt;
+      setSetUsernameError(`Connection interrupted. Reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})...`);
+      setIsLoading(true);
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = null;
+        if (cancelled) return;
+        doConnect();
+      }, delayMs);
+    }
+
     function doConnect() {
       setIsLoading(true);
-      setSetUsernameError(null);
       profileLoadTimeout = setTimeout(() => {
         if (cancelled) return;
-        setSetUsernameError("Timed out loading player profile. Please retry.");
-        setIsLoading(false);
+        scheduleReconnect("timed out loading player profile");
       }, 8000);
       try {
         const conn = connect(
           token,
           (identity) => {
+            reconnectAttempts = 0;
+            setSetUsernameError(null);
             myIdentity = identity;
             const c = getConnection();
             if (!c) return;
@@ -131,20 +199,12 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
             const message = error instanceof Error ? error.message : "Connection to database failed";
             setSetUsernameError(message);
             setConnection(null);
-            setIsLoading(false);
-            if (profileLoadTimeout) {
-              clearTimeout(profileLoadTimeout);
-              profileLoadTimeout = null;
-            }
+            scheduleReconnect(message);
           },
           () => {
             if (cancelled) return;
             setConnection(null);
-            setIsLoading(false);
-            if (profileLoadTimeout) {
-              clearTimeout(profileLoadTimeout);
-              profileLoadTimeout = null;
-            }
+            scheduleReconnect("disconnected from server");
           }
         );
         if (cancelled) return;
@@ -158,23 +218,25 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
         conn.subscriptionBuilder()
           .onApplied(() => {
             if (cancelled) return;
-            // Fallback: if identity callback didn't run in this effect instance,
-            // hydrate it from the connection object before resolving.
             if (!myIdentity) {
               const connIdentity = (conn as { identity?: import("spacetimedb").Identity }).identity;
               if (connIdentity) myIdentity = connIdentity;
             }
             hasAppliedUserSnapshot = true;
             resolveUsernameFromDb(conn);
+            refreshOnlineUsers(conn);
           })
           .subscribe("SELECT * FROM user");
 
-        const userTable = (conn.db as unknown as { user?: { onInsert: (cb: (ctx: unknown, row: { identity: { toHexString: () => string }; username?: string | null }) => void) => void; onUpdate: (cb: (ctx: unknown, old: unknown, row: { identity: { toHexString: () => string }; username?: string | null }) => void) => void; onDelete: (cb: (ctx: unknown, row: { identity: { toHexString: () => string } }) => void) => void } }).user;
+        const userTable = (conn.db as unknown as { user?: { onInsert: (cb: (ctx: unknown, row: UserRow) => void) => void; onUpdate: (cb: (ctx: unknown, old: unknown, row: UserRow) => void) => void; onDelete: (cb: (ctx: unknown, row: { identity: { toHexString: () => string } }) => void) => void } }).user;
         if (userTable) {
           userTable.onInsert((_ctx, row) => {
-            if (cancelled || !myIdentity) return;
-            if (row.identity.toHexString() === myIdentity!.toHexString()) {
+            if (cancelled) return;
+            refreshOnlineUsers(conn);
+            const id = myIdentity ?? (conn as { identity?: import("spacetimedb").Identity }).identity;
+            if (id && row.identity.toHexString() === id.toHexString()) {
               setMyUsername(row.username ?? null);
+              setMyBio(row.bio ?? null);
               setIsLoading(false);
               if (profileLoadTimeout) {
                 clearTimeout(profileLoadTimeout);
@@ -183,9 +245,12 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
             }
           });
           userTable.onUpdate((_ctx, _old, newRow) => {
-            if (cancelled || !myIdentity) return;
-            if (newRow.identity.toHexString() === myIdentity!.toHexString()) {
+            if (cancelled) return;
+            refreshOnlineUsers(conn);
+            const id = myIdentity ?? (conn as { identity?: import("spacetimedb").Identity }).identity;
+            if (id && newRow.identity.toHexString() === id.toHexString()) {
               setMyUsername(newRow.username ?? null);
+              setMyBio(newRow.bio ?? null);
               setIsLoading(false);
               if (profileLoadTimeout) {
                 clearTimeout(profileLoadTimeout);
@@ -194,9 +259,12 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
             }
           });
           userTable.onDelete((_ctx, row) => {
-            if (cancelled || !myIdentity) return;
-            if (row.identity.toHexString() === myIdentity!.toHexString()) {
+            if (cancelled) return;
+            refreshOnlineUsers(conn);
+            const id = myIdentity ?? (conn as { identity?: import("spacetimedb").Identity }).identity;
+            if (id && row.identity.toHexString() === id.toHexString()) {
               setMyUsername(null);
+              setMyBio(null);
               setIsLoading(false);
               if (profileLoadTimeout) {
                 clearTimeout(profileLoadTimeout);
@@ -212,11 +280,7 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
         console.error("[SpacetimeDB] Connect failed:", e);
         if (!cancelled) {
           setConnection(null);
-          setIsLoading(false);
-          if (profileLoadTimeout) {
-            clearTimeout(profileLoadTimeout);
-            profileLoadTimeout = null;
-          }
+          scheduleReconnect(e instanceof Error ? e.message : "connect failed");
         }
       }
     }
@@ -224,16 +288,15 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
     doConnect();
     return () => {
       cancelled = true;
-      if (profileLoadTimeout) {
-        clearTimeout(profileLoadTimeout);
-        profileLoadTimeout = null;
-      }
-      // Don't disconnect here - React Strict Mode double-mounts and would close
-      // the connection before the remount establishes a new one. When authToken
-      // becomes null we disconnect in the effect body; when remounting, connect()
-      // will disconnect any existing connection before creating a new one.
+      clearTimers();
+      // Must disconnect on cleanup. React Strict Mode double-mounts; if we don't
+      // disconnect, the remount reuses the connection but gets stale callbacks
+      // (the original onConnect never fires for the new effect), leaving us stuck.
+      disconnect();
       setConnection(null);
       setMyUsername(null);
+      setMyBio(null);
+      setOnlineUsers([]);
     };
   }, [authToken]);
 
@@ -242,10 +305,13 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
       value={{
         connection,
         myUsername,
+        myBio,
         isConnected: connection !== null,
         isLoading,
         setUsernameError,
+        onlineUsers,
         setUsername,
+        setBio,
       }}
     >
       {children}

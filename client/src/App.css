@@ -1,1 +1,9 @@
-/* App-level styles - minimal */
+/* App-level styles - full bleed, no margins */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  background: #000;
+}

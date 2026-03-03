@@ -1,23 +1,21 @@
 /// <reference types="vite/client" />
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-// Import OpenAuth client helpers
-import { createClient /*, OAuthClient */ } from '@openauthjs/openauth/client';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { parseJwt } from '../utils/auth/jwt.ts';
+import { disconnect } from '../network/spacetimedbClient.ts';
 // Removed Node.js specific imports
 // import { Buffer } from 'buffer';
 // import crypto from 'crypto';
 
 // --- Environment-based Configuration ---
-// const isDevelopment = false; // TEMPORARILY FORCE PRODUCTION FOR TESTING
 const isDevelopment = import.meta.env.DEV || window.location.hostname === 'localhost';
 
-const AUTH_SERVER_URL = isDevelopment
-  ? 'http://localhost:4001' : 'https://selo-empire-production.up.railway.app';
+const AUTH_SERVER_URL = import.meta.env.VITE_AUTH_SERVER_URL
+  ?? (isDevelopment ? 'http://localhost:4001' : (typeof window !== 'undefined' ? window.location.origin : ''));
 
-console.log(`[Auth] Environment: ${isDevelopment ? 'development' : 'production'}`);
-console.log(`[Auth] Using auth server: ${AUTH_SERVER_URL}`);
-const OIDC_CLIENT_ID = 'vibe-survival-game-client'; // An identifier for this React app
-const REDIRECT_URI = window.location.origin + '/callback'; // Where OpenAuth redirects back after login
+const OIDC_CLIENT_ID = import.meta.env.VITE_AUTH_CLIENT_ID ?? 'vibe-survival-game-client';
+const REDIRECT_URI = window.location.origin + '/callback';
+const REFRESH_THRESHOLD_SECONDS = 30 * 60; // Refresh when < 30 min left
+const VALIDITY_CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 const LOCAL_STORAGE_KEYS = {
     ID_TOKEN: 'oidc_id_token',
     ACCESS_TOKEN: 'oidc_access_token',
@@ -111,11 +109,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // OpenAuth client (kept for future use, e.g. token refresh)
-  const [_oidcClient] = useState(() => createClient({
-      issuer: AUTH_SERVER_URL,
-      clientID: OIDC_CLIENT_ID,
-  }));
+  const navigateToRoot = useCallback(() => {
+    window.history.replaceState({}, document.title, '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, []);
 
   // --- Core Auth Functions ---
 
@@ -179,8 +176,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
                  const profile = parseToken(existingToken);
                  setUserProfile(profile);
             } else {
-                // Redirect to home so user can start fresh
-                window.location.replace('/');
+                navigateToRoot();
             }
         }
         setIsLoading(false);
@@ -191,7 +187,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     if (!verifier) {
         setAuthError("Session expired. Please sign in again.");
         setIsLoading(false);
-        window.location.replace('/');
+        navigateToRoot();
         return;
     }
 
@@ -247,7 +243,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         setAuthError(null);
         localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER); // Only remove after success
 
-        window.location.replace('/');
+        navigateToRoot();
 
     } catch (error: any) {
         console.error("[AuthContext] Error handling redirect callback:", error);
@@ -260,39 +256,93 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     } finally {
         setIsLoading(false);
     }
-  }, []);
+  }, [navigateToRoot]);
 
   const logout = useCallback(async () => {
-    // console.log("[AuthContext LOG] Logging out...");
     setIsLoading(true);
+    // Explicitly disconnect SpacetimeDB before redirect so the server can clean up.
+    // Without this, the page unloads before the disconnect is sent, leaving the
+    // server in a bad state that blocks re-login until the server is restarted.
+    try {
+      disconnect();
+    } catch {
+      // Ignore; we're logging out anyway
+    }
+    const refreshToken = localStorage.getItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
+    if (refreshToken) {
+      try {
+        const body = new URLSearchParams();
+        body.append('token', refreshToken);
+        body.append('token_type_hint', 'refresh_token');
+        await fetch(`${AUTH_SERVER_URL}/revoke`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+      } catch {
+        // Ignore revoke errors; we clear local state anyway
+      }
+    }
     clearTokens();
     setSpacetimeToken(null);
     setUserProfile(null);
     setAuthError(null);
-
-    // Optional: Redirect to OpenAuth end session endpoint if available/needed
-    // This might require constructing a URL with id_token_hint and post_logout_redirect_uri
-    // const endSessionUrl = `${AUTH_SERVER_URL}/protocol/openid-connect/logout?client_id=${OIDC_CLIENT_ID}&post_logout_redirect_uri=${encodeURIComponent(window.location.origin)}`;
-    // window.location.assign(endSessionUrl);
-
-    // For simplicity now, just clear client-side state
-    // console.log("[AuthContext LOG] Cleared state and tokens for logout.");
     setIsLoading(false);
-    // Force reload or redirect to home to clear application state if needed
-    window.location.assign(window.location.origin);
-
-  }, []);
+    // Keep app in SPA flow; avoid hard reload race on reconnect.
+    navigateToRoot();
+  }, [navigateToRoot]);
 
   // --- Helper Functions ---
   const clearTokens = () => {
-      localStorage.removeItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
-      localStorage.removeItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN);
-      localStorage.removeItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
-      localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER); // Just in case
-      setSpacetimeToken(null);
-      setUserProfile(null);
-      // console.log("[AuthContext LOG] Cleared tokens from storage AND state.");
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN);
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
+    localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
+    setSpacetimeToken(null);
+    setUserProfile(null);
   };
+
+  const refreshTokens = useCallback(async (): Promise<boolean> => {
+    const refreshToken = localStorage.getItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
+    if (!refreshToken) return false;
+
+    try {
+      const body = new URLSearchParams();
+      body.append('grant_type', 'refresh_token');
+      body.append('refresh_token', refreshToken);
+      body.append('client_id', OIDC_CLIENT_ID);
+
+      const res = await fetch(`${AUTH_SERVER_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        console.warn('[AuthContext] Token refresh failed:', data);
+        return false;
+      }
+
+      const id_token = data.id_token as string | undefined;
+      const access_token = data.access_token as string | undefined;
+      const new_refresh_token = data.refresh_token as string | undefined;
+
+      if (!id_token) return false;
+
+      localStorage.setItem(LOCAL_STORAGE_KEYS.ID_TOKEN, id_token);
+      if (access_token) localStorage.setItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN, access_token);
+      if (new_refresh_token) localStorage.setItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN, new_refresh_token);
+
+      setSpacetimeToken(id_token);
+      const profile = parseToken(id_token);
+      if (profile) setUserProfile(profile);
+      return true;
+    } catch (err) {
+      console.warn('[AuthContext] Token refresh error:', err);
+      return false;
+    }
+  }, []);
 
   const parseToken = (token: string): UserProfile | null => {
        try {
@@ -354,54 +404,54 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const invalidateCurrentToken = useCallback(() => {
     console.warn("[AuthContext LOG] Current token is being invalidated, likely due to rejection by a service (e.g., SpacetimeDB).");
-    // Read the token BEFORE clearing it
     const tokenExistedPriorToInvalidation = !!localStorage.getItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
 
-    clearTokens(); // This sets spacetimeToken to null, userProfile to null, and updates isAuthenticated via derivation
-
-    // Set error only if a token actually existed and was just cleared by this invalidation call.
-    if (tokenExistedPriorToInvalidation) {
-        setAuthError("Your session was rejected or has expired. Please sign in again.");
-    } else {
-        // Optionally, set a different error or no error if no token was present to invalidate
-        // For now, let's assume invalidating a non-existent token is not an error from AuthContext's perspective,
-        // or it could be logged if it's unexpected.
-        console.warn("[AuthContext LOG] invalidateCurrentToken called, but no token was present in storage to invalidate (or was cleared just before check). No authError set by this path unless one already existed.");
+    try {
+      disconnect();
+    } catch {
+      // Ignore
     }
-    setIsLoading(false); // Ensure UI is not stuck in loading state
+    clearTokens();
 
-    // Force a page reload to ensure clean state
-    setTimeout(() => {
-        console.log("[AuthContext LOG] Forcing page reload after token invalidation to ensure clean state");
-        window.location.assign(window.location.origin);
-    }, 100);
-  }, [setAuthError, setIsLoading]); // clearTokens is stable as it's defined in the same scope and its own dependencies (setters) are stable
+    if (tokenExistedPriorToInvalidation) {
+      setAuthError("Your session was rejected or has expired. Please sign in again.");
+    } else {
+      console.warn("[AuthContext LOG] invalidateCurrentToken called, but no token was present in storage to invalidate.");
+    }
+    setIsLoading(false);
+
+    navigateToRoot();
+  }, [navigateToRoot]);
 
   // --- Effect for Initial Load / Handling Redirect ---
   useEffect(() => {
-    // Only handle redirect OR set initial user profile
     if (window.location.pathname === new URL(REDIRECT_URI).pathname) {
-      // console.log("[AuthContext LOG] Initial Load: Detected callback URL, invoking handler...");
       handleRedirectCallback();
-    } else {
-      // --- MODIFIED: Token is already initialized. Just parse profile and finish loading. ---
-      if (spacetimeToken) {
-          // console.log("[AuthContext LOG] Initial Load: Token was pre-loaded from storage. Parsing profile.");
-          const profile = parseToken(spacetimeToken);
-          if (profile) {
-              setUserProfile(profile);
-              // console.log("[AuthContext LOG] Initial Load: Profile parsed successfully.");
-          } else {
-              console.error("[AuthContext LOG] Initial Load: Failed to parse pre-loaded token. Clearing token.");
-              clearTokens(); // Clear invalid stored token and state
-          }
-      } else {
-         // console.log("[AuthContext LOG] Initial Load: No token was pre-loaded from storage.");
-      }
-      setIsLoading(false); // Finished initial non-callback load
+      return;
     }
+
+    if (!spacetimeToken) {
+      setIsLoading(false);
+      return;
+    }
+
+    const profile = parseToken(spacetimeToken);
+    if (profile) {
+      setUserProfile(profile);
+      setIsLoading(false);
+      return;
+    }
+
+    // Token invalid (expired or malformed): try refresh before clearing
+    (async () => {
+      const refreshed = await refreshTokens();
+      if (!refreshed) {
+        clearTokens();
+      }
+      setIsLoading(false);
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handleRedirectCallback]); // Keep handleRedirectCallback, but token check happens outside effect now
+  }, [handleRedirectCallback]);
 
   // --- Effect to Log Token Changes ---
   useEffect(() => {
@@ -410,14 +460,51 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   }, [spacetimeToken]);
 
   const isAuthenticated = !!spacetimeToken && isTokenValid();
+  const refreshTokensRef = useRef(refreshTokens);
+  refreshTokensRef.current = refreshTokens;
 
-  // Effect to check token validity periodically and clear invalid tokens
+  // Periodic token validity check and proactive refresh
   useEffect(() => {
-    if (spacetimeToken && !isTokenValid()) {
-      console.warn("[AuthContext] Invalid token detected, clearing...");
-      clearTokens();
-    }
-  }, [spacetimeToken, isTokenValid]);
+    if (!spacetimeToken) return;
+
+    const checkAndRefresh = async () => {
+      try {
+        const decoded = parseJwt(spacetimeToken);
+        const now = Math.floor(Date.now() / 1000);
+        const exp = decoded.exp as number | undefined;
+
+        if (!exp) {
+          console.warn('[AuthContext] Token has no exp, clearing');
+          clearTokens();
+          return;
+        }
+
+        if (exp < now) {
+          // Expired: try refresh first, else clear
+          const refreshed = await refreshTokensRef.current();
+          if (!refreshed) {
+            console.warn('[AuthContext] Token expired and refresh failed, clearing');
+            clearTokens();
+          }
+          return;
+        }
+
+        const secondsUntilExpiry = exp - now;
+        if (secondsUntilExpiry < REFRESH_THRESHOLD_SECONDS) {
+          const refreshed = await refreshTokensRef.current();
+          if (!refreshed) {
+            console.warn('[AuthContext] Proactive refresh failed');
+          }
+        }
+      } catch {
+        clearTokens();
+      }
+    };
+
+    checkAndRefresh(); // Run immediately
+    const interval = setInterval(checkAndRefresh, VALIDITY_CHECK_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [spacetimeToken]);
 
   return (
     <AuthContext.Provider

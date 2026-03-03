@@ -1,75 +1,159 @@
+/**
+ * SpacetimeDB Theme - Black / Green / Purple
+ * Matches SpacetimeDB dashboard aesthetic.
+ */
+
 :root {
-  /* Balkan Theme Colors */
-  --balkan-red: #b71c1c;
-  --balkan-blue: #0d47a1;
-  --balkan-gold: #ffd700;
-  --balkan-cream: #f5f5dc;
-  --balkan-dark-wood: #3e2723;
-  --balkan-light-wood: #8d6e63;
-  --balkan-light-blue: #90caf9;
+  /* Base */
+  --stdb-bg: #000000;
+  --stdb-bg-card: #1c1c1c;
+  --stdb-bg-card-elevated: #222222;
+  --stdb-bg-input: #1a1a1a;
+  /* Spacing scale (SpacetimeDB-style generous spacing) */
+  --stdb-space-xs: 8px;
+  --stdb-space-sm: 16px;
+  --stdb-space-md: 24px;
+  --stdb-space-lg: 32px;
+  --stdb-space-xl: 48px;
+  --stdb-space-2xl: 64px;
+  --stdb-space-3xl: 80px;
+  --stdb-space-4xl: 96px;
+  --stdb-bg-overlay: rgba(0, 0, 0, 0.95);
 
-  /* UI Specifics */
-  --hud-bg: rgba(62, 39, 35, 0.85); /* Dark wood semi-transparent */
-  --hud-border: 2px solid var(--balkan-gold);
-  --hud-text: var(--balkan-cream);
-  --hud-text-shadow: 1px 1px 0 #000;
-  
+  /* Accents */
+  --stdb-green: #00ff88;
+  --stdb-green-dim: rgba(0, 255, 136, 0.8);
+  --stdb-green-bg: rgba(0, 255, 136, 0.15);
+  --stdb-purple: #a020f0;
+  --stdb-purple-dim: rgba(160, 32, 240, 0.8);
+  --stdb-purple-bg: rgba(160, 32, 240, 0.15);
+  --stdb-purple-border: rgba(160, 32, 240, 0.4);
+
+  /* Text */
+  --stdb-text: #ffffff;
+  --stdb-text-muted: rgba(255, 255, 255, 0.7);
+  --stdb-text-dim: rgba(255, 255, 255, 0.5);
+  --stdb-text-label: var(--stdb-green);
+
+  /* Borders */
+  --stdb-border: 1px solid var(--stdb-purple-border);
+  --stdb-border-green: 1px solid rgba(0, 255, 136, 0.4);
+
+  /* Buttons */
+  --stdb-btn-primary-bg: var(--stdb-green);
+  --stdb-btn-primary-text: #0a0a0a;
+  --stdb-btn-primary-hover: #1aff9e;
+  --stdb-btn-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --stdb-btn-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --stdb-btn-radius: 8px;
+  --stdb-btn-radius-pill: 9999px;
+  --stdb-btn-transition: all 0.2s ease;
+  --stdb-btn-danger-bg: rgba(255, 80, 80, 0.15);
+  --stdb-btn-danger-border: rgba(255, 80, 80, 0.4);
+  --stdb-btn-danger-text: #ff6b6b;
+  --stdb-btn-disabled-bg: rgba(60, 60, 60, 0.6);
+  --stdb-btn-disabled-text: rgba(255, 255, 255, 0.4);
+
   /* Fonts */
-  --font-main: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  --font-serif: 'Georgia', 'Times New Roman', Times, serif;
+  --stdb-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --stdb-font-mono: 'Courier New', Consolas, Monaco, monospace;
 
-  /* Scrollbar (Balkan theme) */
-  --scrollbar-track: rgba(62, 39, 35, 0.4);
-  --scrollbar-thumb: var(--balkan-light-wood);
-  --scrollbar-thumb-hover: var(--balkan-gold);
+  /* Scrollbar */
+  --scrollbar-track: rgba(30, 30, 30, 0.6);
+  --scrollbar-thumb: var(--stdb-purple);
+  --scrollbar-thumb-hover: var(--stdb-green);
   --scrollbar-width: 8px;
+
+  /* Layout */
+  --stdb-content-max: min(900px, 98vw);
+  --stdb-content-padding: clamp(16px, 1.5vw, 24px);
+  --stdb-content-radius: 20px;
+  --stdb-code-bg: rgba(0, 0, 0, 0.4);
 }
 
-.balkan-panel {
-  background: var(--hud-bg);
-  border: var(--hud-border);
-  border-radius: 4px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-  color: var(--hud-text);
-  font-family: var(--font-main);
-  position: relative;
+/* Panel */
+.stdb-panel {
+  background: var(--stdb-bg-card);
+  border: var(--stdb-border);
+  border-radius: 8px;
+  color: var(--stdb-text);
+  font-family: var(--stdb-font);
 }
 
-/* Decorative corner flourishes (simulated with pseudo-elements) */
-.balkan-panel::before {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  right: 2px;
-  bottom: 2px;
-  border: 1px dashed var(--balkan-light-wood);
-  pointer-events: none;
-}
-
-.balkan-button {
-  background: var(--balkan-red);
-  color: white;
-  border: 1px solid var(--balkan-dark-wood);
-  padding: 8px 16px;
-  font-family: var(--font-main);
-  font-weight: bold;
+/* Primary button */
+.stdb-btn-primary {
+  background: var(--stdb-btn-primary-bg);
+  color: var(--stdb-btn-primary-text);
+  border: none;
+  border-radius: var(--stdb-btn-radius);
+  padding: 12px 24px;
+  font-family: var(--stdb-font);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.3px;
   cursor: pointer;
-  transition: all 0.2s;
-  text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 2px 2px rgba(0,0,0,0.2);
+  transition: var(--stdb-btn-transition);
+  box-shadow: var(--stdb-btn-shadow);
+  box-sizing: border-box;
 }
 
-.balkan-button:hover {
-  background: #d32f2f;
-  transform: translateY(-1px);
+.stdb-btn-primary:hover:not(:disabled) {
+  background: var(--stdb-btn-primary-hover);
+  box-shadow: var(--stdb-btn-shadow-hover);
 }
 
-.balkan-button:active {
-  transform: translateY(1px);
-  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+.stdb-btn-primary:focus-visible {
+  outline: 2px solid var(--stdb-green);
+  outline-offset: 2px;
 }
 
-.balkan-text-shadow {
-  text-shadow: var(--hud-text-shadow);
+/* Danger button (logout) */
+.stdb-btn-danger {
+  background: var(--stdb-btn-danger-bg);
+  border: 1px solid var(--stdb-btn-danger-border);
+  color: var(--stdb-btn-danger-text);
+  border-radius: var(--stdb-btn-radius);
+  padding: 8px 16px;
+  font-family: var(--stdb-font);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--stdb-btn-transition);
+}
+
+.stdb-btn-danger:hover {
+  background: rgba(255, 80, 80, 0.25);
+  border-color: rgba(255, 80, 80, 0.6);
+}
+
+/* Content card - wide content boxes (About, FAQ sections) */
+.stdb-content-card {
+  background: var(--stdb-bg-card);
+  backdrop-filter: blur(16px);
+  border-radius: var(--stdb-content-radius);
+  padding: clamp(24px, 4vw, 40px) clamp(20px, 2vw, 32px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  max-width: var(--stdb-content-max);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Section label (ABOUT, FAQ, etc.) */
+.stdb-section-label {
+  font-size: 12px;
+  color: var(--stdb-green);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  font-family: var(--stdb-font);
+}
+
+/* Code inline */
+.stdb-code {
+  background: var(--stdb-code-bg);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: var(--stdb-font-mono);
 }

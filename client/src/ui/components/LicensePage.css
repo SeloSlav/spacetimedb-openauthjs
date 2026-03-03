@@ -1,0 +1,64 @@
+.license-page {
+  min-height: 100vh;
+  background: var(--stdb-bg);
+  color: var(--stdb-text);
+  padding: 40px 20px 80px;
+  font-family: var(--stdb-font);
+}
+
+.license-page__container {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.license-page__header {
+  margin-bottom: 40px;
+  text-align: center;
+}
+
+.license-page__title {
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 700;
+  color: var(--stdb-green);
+  margin: 0 0 8px 0;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.license-page__subtitle {
+  font-size: 16px;
+  color: var(--stdb-text-muted);
+  margin: 0 0 24px 0;
+}
+
+.license-page__back {
+  display: inline-block;
+  background: transparent;
+  border: 1px solid var(--stdb-purple-border);
+  color: var(--stdb-text-muted);
+  padding: 10px 20px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.license-page__back:hover {
+  color: var(--stdb-green);
+  border-color: var(--stdb-green);
+}
+
+.license-page__content {
+  background: rgba(0, 0, 0, 0.5);
+  border: 2px solid var(--stdb-purple-border);
+  border-radius: 12px;
+  padding: 32px 40px;
+  font-size: 15px;
+  line-height: 1.8;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-x: auto;
+  font-family: var(--stdb-font-mono);
+  text-align: left;
+}

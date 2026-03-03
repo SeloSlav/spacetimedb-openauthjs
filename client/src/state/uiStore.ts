@@ -1,4 +1,4 @@
-/** UI state - minimal store for menus, panels, modals */
+/** UI state - minimal store for auth demo */
 
 export interface UIState {
   buildMenuOpen: boolean;

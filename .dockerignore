@@ -1,0 +1,31 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build outputs
+dist
+**/dist
+client/dist
+auth/dist
+
+# SpacetimeDB server (not needed for client+auth image)
+server/target
+server/Cargo.lock
+
+# Git and IDE
+.git
+.gitignore
+.cursor
+.vscode
+.idea
+*.md
+!README.md
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# Misc
+*.log
+.DS_Store
