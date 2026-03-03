@@ -53,10 +53,28 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173). Sign in, choose a username, and you'll see a welcome message with logout.
 
-## Environment
+## Environment Variables
 
-- `VITE_AUTH_SERVER_URL` – Auth server URL (default: `http://localhost:4001` in dev)
-- `VITE_AUTH_CLIENT_ID` – OIDC client ID (default: `vibe-survival-game-client`)
+### Client (`client/.env`)
+
+- `VITE_AUTH_SERVER_URL` - Auth server URL (default: `http://localhost:4001` in dev)
+- `VITE_AUTH_CLIENT_ID` - OIDC client ID (default: `vibe-survival-game-client`)
+
+### Auth server (`auth/.env`)
+
+- `NODE_ENV` - `development` or `production`
+- `PORT` - Auth server port (default: `4001`)
+- `ISSUER_URL` - Public base URL for OIDC issuer (required in production)
+- `JWT_PRIVATE_KEY` - Required
+- `JWT_PUBLIC_KEY` - Required
+- `DATABASE_URL` - Optional PostgreSQL URL (in-memory store is used if unset)
+- `BCRYPT_ROUNDS` - Optional, default `12`
+- `RESEND_API_KEY` - Required only if password reset email is enabled
+- `RESEND_FROM` - Sender identity for reset emails
+
+Notes:
+- In Railway, `ISSUER_URL` can fall back to `RAILWAY_STATIC_URL`.
+- Generate JWT keys with `cd auth && npm run keys`.
 
 ## Project Structure
 
@@ -72,28 +90,26 @@ Open [http://localhost:5173](http://localhost:5173). Sign in, choose a username,
 └── package.json
 ```
 
-## Docker + Railway
+## Production Deployment (Concise Checklist)
 
-Deploy client and auth together to Railway:
-
-1. **Generate SpacetimeDB bindings** (required before build):
+1. **Publish SpacetimeDB module to production**
    ```bash
-   spacetime build -p ./server
-   spacetime generate --lang typescript --out-dir ./client/src/generated -p ./server
+   npm run deploy:prod
    ```
+2. **Configure auth server env** (`ISSUER_URL`, JWT keys, optional `DATABASE_URL`, optional email vars).
+3. **Set client env** so `VITE_AUTH_SERVER_URL` points to your deployed auth URL.
+4. **Build and run services**:
+   - Client: `npm run build`
+   - Auth server: `cd auth && npm run build && npm start`
 
-2. **Push to Railway** – Railway auto-detects the root `Dockerfile`.
+### Docker + Railway (optional)
 
-3. **Set environment variables** in Railway:
-   - `ISSUER_URL` – Your Railway deployment URL (e.g. `https://your-app.up.railway.app`). Railway sets `RAILWAY_STATIC_URL` automatically.
-   - `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` – From `cd auth && npm run keys`
-   - `DATABASE_URL` – PostgreSQL connection string (optional; uses in-memory if unset)
-
-4. **Build locally** (optional):
-   ```bash
-   docker build -t spacetimedb-auth-demo .
-   docker run -p 4001:4001 -e JWT_PRIVATE_KEY="..." -e JWT_PUBLIC_KEY="..." spacetimedb-auth-demo
-   ```
+- Railway can use the root `Dockerfile`.
+- Before building, generate bindings:
+  ```bash
+  spacetime build -p ./server
+  spacetime generate --lang typescript --out-dir ./client/src/generated -p ./server
+  ```
 
 ## SpacetimeDB Commands
 
