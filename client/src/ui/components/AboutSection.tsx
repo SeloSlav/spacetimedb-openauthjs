@@ -1,21 +1,60 @@
 /**
  * AboutSection - About content for the login/landing page.
  * Uses theme CSS from client/src/theme.
+ * Spotlight: background layer is masked (hole); content layer stays on top so text remains readable.
  */
 
-import React from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { uiTheme } from '../../theme/uiTheme.ts';
+
+const SPOTLIGHT_RADIUS_INNER = 70;
+const SPOTLIGHT_RADIUS_OUTER = 140;
 
 interface AboutSectionProps {
   onFaqClick: () => void;
 }
 
-const AboutSection: React.FC<AboutSectionProps> = ({ onFaqClick }) => (
+const AboutSection: React.FC<AboutSectionProps> = ({ onFaqClick }) => {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [maskPos, setMaskPos] = useState<{ x: number; y: number } | null>(null);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setMaskPos({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setMaskPos(null);
+  }, []);
+
+  const maskStyle =
+    maskPos !== null
+      ? {
+          WebkitMaskImage: `radial-gradient(circle at ${maskPos.x}px ${maskPos.y}px, transparent 0%, transparent ${SPOTLIGHT_RADIUS_INNER}px, black ${SPOTLIGHT_RADIUS_OUTER}px)`,
+          maskImage: `radial-gradient(circle at ${maskPos.x}px ${maskPos.y}px, transparent 0%, transparent ${SPOTLIGHT_RADIUS_INNER}px, black ${SPOTLIGHT_RADIUS_OUTER}px)`,
+        }
+      : undefined;
+
+  return (
   <div
+    ref={wrapperRef}
     data-about-section
-    className={`${uiTheme.contentCard} stdb-about-section`}
+    className="stdb-aperture-card stdb-about-section"
+    onMouseMove={handleMouseMove}
+    onMouseLeave={handleMouseLeave}
   >
+    <div
+      className={`${uiTheme.contentCard} stdb-aperture-bg`}
+      style={maskStyle}
+      aria-hidden
+    />
+    <div className="stdb-aperture-content">
     <div className={`${uiTheme.sectionLabel} stdb-section-label-spaced`}>
       ABOUT
     </div>
@@ -57,7 +96,9 @@ const AboutSection: React.FC<AboutSectionProps> = ({ onFaqClick }) => (
       </Link>
       .
     </p>
+    </div>
   </div>
-);
+  );
+};
 
 export default AboutSection;

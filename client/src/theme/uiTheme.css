@@ -172,3 +172,41 @@
     transform: rotate(360deg);
   }
 }
+
+/* Aperture card: background (masked) + content (on top, always visible) */
+.stdb-aperture-card {
+  position: relative;
+  max-width: var(--stdb-content-max);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stdb-aperture-bg {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--stdb-content-radius);
+  padding: 0;
+}
+
+.stdb-aperture-content {
+  position: relative;
+  z-index: 1;
+  padding: clamp(24px, 4vw, 40px) clamp(20px, 2vw, 32px);
+  /* High-contrast text so it stays readable over the aperture (background shows through) */
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 1),
+    0 0 12px rgba(0, 0, 0, 0.95),
+    0 1px 3px rgba(0, 0, 0, 1);
+}
+
+.stdb-aperture-content .stdb-about-h2,
+.stdb-aperture-content .stdb-about-p,
+.stdb-aperture-content .stdb-section-label,
+.stdb-aperture-content a,
+.stdb-aperture-content code,
+.stdb-aperture-content strong {
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 1),
+    0 0 12px rgba(0, 0, 0, 0.95),
+    0 1px 3px rgba(0, 0, 0, 1);
+}

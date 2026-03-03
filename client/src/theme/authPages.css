@@ -36,17 +36,49 @@ body {
 }
 
 .container {
-  background: rgba(0, 0, 0, 0.78);
-  backdrop-filter: blur(12px);
-  border: var(--stdb-border);
-  border-radius: 16px;
-  padding: 56px 40px;
   width: 90%;
   max-width: 460px;
   position: relative;
   z-index: 2;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   text-align: center;
+}
+
+/* Aperture split: background (masked) + content (on top, text always visible) */
+.container-bg {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(12px);
+  border: var(--stdb-border);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.container-content {
+  position: relative;
+  z-index: 1;
+  padding: 56px 40px;
+  /* High-contrast text for readability over aperture */
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 1),
+    0 0 12px rgba(0, 0, 0, 0.95),
+    0 1px 3px rgba(0, 0, 0, 1);
+}
+
+.container-content h1,
+.container-content p,
+.container-content label,
+.container-content a,
+.container-content .form-title,
+.container-content .form-description,
+.container-content .form-link,
+.container-content .game-title span,
+.container-content .error-message,
+.container-content .success-message {
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 1),
+    0 0 12px rgba(0, 0, 0, 0.95),
+    0 1px 3px rgba(0, 0, 0, 1);
 }
 
 .container h1 {
@@ -217,8 +249,11 @@ a.submit-button {
 
 @media (max-width: 480px) {
   .container {
-    padding: 34px 24px;
     margin: 16px;
+  }
+
+  .container-content {
+    padding: 34px 24px;
   }
 
   .game-title span {

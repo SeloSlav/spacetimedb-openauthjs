@@ -209,6 +209,33 @@ async function success(ctx: any, value: any): Promise<Response> {
 /* -------------------------------------------------------------------------- */
 /* Helper Functions for Password Reset Pages                                   */
 /* -------------------------------------------------------------------------- */
+const AUTH_SPOTLIGHT_SCRIPT = `
+<script defer>
+(function(){
+  document.addEventListener('DOMContentLoaded',function(){
+    var el=document.querySelector('.container');
+    if(!el)return;
+    var inner=70,outer=140;
+    var bg=document.createElement('div');
+    bg.className='container-bg';
+    var content=document.createElement('div');
+    content.className='container-content';
+    while(el.firstChild)content.appendChild(el.firstChild);
+    el.appendChild(bg);
+    el.appendChild(content);
+    el.addEventListener('mousemove',function(e){
+      var rect=el.getBoundingClientRect();
+      var x=e.clientX-rect.left,y=e.clientY-rect.top;
+      bg.style.webkitMaskImage='radial-gradient(circle at '+x+'px '+y+'px, transparent 0%, transparent '+inner+'px, black '+outer+'px)';
+      bg.style.maskImage='radial-gradient(circle at '+x+'px '+y+'px, transparent 0%, transparent '+inner+'px, black '+outer+'px)';
+    });
+    el.addEventListener('mouseleave',function(){
+      bg.style.webkitMaskImage='';bg.style.maskImage='';
+    });
+  });
+})();
+</script>`;
+
 function renderAuthPageHead(title: string): string {
   return `
       <meta charset="UTF-8">
@@ -217,6 +244,7 @@ function renderAuthPageHead(title: string): string {
       <title>${title}</title>
       <link rel="stylesheet" href="/theme/uiTheme.css">
       <link rel="stylesheet" href="/theme/authPages.css">
+      ${AUTH_SPOTLIGHT_SCRIPT}
   `;
 }
 
@@ -638,6 +666,7 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
             <title>Create Account - SpacetimeDB Auth Demo</title>
             <link rel="stylesheet" href="/theme/uiTheme.css">
             <link rel="stylesheet" href="/theme/authPages.css">
+            ${AUTH_SPOTLIGHT_SCRIPT}
         </head>
         <body>
             <div class="container">
@@ -780,6 +809,7 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
                 <title>Sign In - SpacetimeDB Auth Demo</title>
                 <link rel="stylesheet" href="/theme/uiTheme.css">
                 <link rel="stylesheet" href="/theme/authPages.css">
+                ${AUTH_SPOTLIGHT_SCRIPT}
             </head>
             <body>
                 <div class="container">
