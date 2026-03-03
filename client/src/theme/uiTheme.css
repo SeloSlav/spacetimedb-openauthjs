@@ -165,3 +165,10 @@
   font-size: 14px;
   font-family: var(--stdb-font-mono);
 }
+
+/* Loading spinner animation */
+@keyframes stdb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

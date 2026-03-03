@@ -20,13 +20,35 @@ function AppContent() {
           position: "fixed",
           inset: 0,
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: "var(--stdb-space-lg)",
           background: "var(--stdb-bg)",
-          color: "var(--stdb-text)",
+          fontFamily: "var(--stdb-font)",
         }}
       >
-        <p>Completing login...</p>
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            border: "3px solid var(--stdb-purple-border)",
+            borderTopColor: "var(--stdb-green)",
+            borderRadius: "50%",
+            animation: "stdb-spin 0.8s linear infinite",
+          }}
+        />
+        <p
+          style={{
+            margin: 0,
+            color: "var(--stdb-text)",
+            fontSize: "16px",
+            fontWeight: 500,
+            letterSpacing: "0.5px",
+          }}
+        >
+          Completing login...
+        </p>
       </div>
     );
   }
@@ -56,13 +78,35 @@ function AppContent() {
           position: "fixed",
           inset: 0,
           display: "flex",
+          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
+          gap: "var(--stdb-space-lg)",
           background: "var(--stdb-bg)",
-          color: "var(--stdb-text)",
+          fontFamily: "var(--stdb-font)",
         }}
       >
-        <p>Connecting...</p>
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            border: "3px solid var(--stdb-purple-border)",
+            borderTopColor: "var(--stdb-green)",
+            borderRadius: "50%",
+            animation: "stdb-spin 0.8s linear infinite",
+          }}
+        />
+        <p
+          style={{
+            margin: 0,
+            color: "var(--stdb-text)",
+            fontSize: "16px",
+            fontWeight: 500,
+            letterSpacing: "0.5px",
+          }}
+        >
+          Connecting...
+        </p>
       </div>
     );
   }

@@ -24,7 +24,7 @@ import AboutSection from './AboutSection.tsx';
 import FAQSection, { type FAQItem } from './FAQSection.tsx';
 
 const UI_FONT_FAMILY = "var(--stdb-font)";
-const SPACETIMEDB_REFERRAL_URL = "https://spacetimedb.com/@seloslav";
+const SPACETIMEDB_REFERRAL_URL = "https://spacetimedb.com/?referral=SeloSlav";
 
 const FAQ_ITEMS = (onLicenseClick: () => void, onDisclaimerClick: () => void): FAQItem[] => [
   { question: "What is this?", answer: "SpacetimeDB Auth Demo shows how to use OpenAuth (OIDC) with SpacetimeDB. Sign in, choose a username, and see a welcome message. It demonstrates token-based auth for real-time multiplayer apps." },
@@ -1017,19 +1017,21 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                 expandedIndex={expandedFaqIndex}
                 onToggle={(i) => setExpandedFaqIndex(expandedFaqIndex === i ? null : i)}
               />
-              <div className="stdb-cta-section">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handleSubmit(e as unknown as React.FormEvent);
-                  }}
-                  className="stdb-cta-btn"
-                >
-                  {isAuthenticated ? 'Enter App' : 'Start Your Journey'}
-                </button>
-              </div>
+              {!isAuthenticated && (
+                <div className="stdb-cta-section">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleSubmit(e as unknown as React.FormEvent);
+                    }}
+                    className="stdb-cta-btn"
+                  >
+                    Start Your Journey
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
