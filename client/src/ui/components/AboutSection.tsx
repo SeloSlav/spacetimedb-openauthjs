@@ -8,8 +8,7 @@ import React, { useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { uiTheme } from '../../theme/uiTheme.ts';
 
-const SPOTLIGHT_RADIUS_INNER = 70;
-const SPOTLIGHT_RADIUS_OUTER = 140;
+const APERTURE_RADIUS = 80;
 
 interface AboutSectionProps {
   onFaqClick: () => void;
@@ -36,8 +35,8 @@ const AboutSection: React.FC<AboutSectionProps> = ({ onFaqClick }) => {
   const maskStyle =
     maskPos !== null
       ? {
-          WebkitMaskImage: `radial-gradient(circle at ${maskPos.x}px ${maskPos.y}px, transparent 0%, transparent ${SPOTLIGHT_RADIUS_INNER}px, black ${SPOTLIGHT_RADIUS_OUTER}px)`,
-          maskImage: `radial-gradient(circle at ${maskPos.x}px ${maskPos.y}px, transparent 0%, transparent ${SPOTLIGHT_RADIUS_INNER}px, black ${SPOTLIGHT_RADIUS_OUTER}px)`,
+          WebkitMaskImage: `radial-gradient(circle at ${maskPos.x}px ${maskPos.y}px, transparent 0%, transparent ${APERTURE_RADIUS}px, black ${APERTURE_RADIUS}px)`,
+          maskImage: `radial-gradient(circle at ${maskPos.x}px ${maskPos.y}px, transparent 0%, transparent ${APERTURE_RADIUS}px, black ${APERTURE_RADIUS}px)`,
         }
       : undefined;
 
@@ -45,7 +44,7 @@ const AboutSection: React.FC<AboutSectionProps> = ({ onFaqClick }) => {
   <div
     ref={wrapperRef}
     data-about-section
-    className="stdb-aperture-card stdb-about-section"
+    className={`stdb-aperture-card stdb-about-section${maskPos !== null ? ' stdb-aperture-active' : ''}`}
     onMouseMove={handleMouseMove}
     onMouseLeave={handleMouseLeave}
   >
@@ -54,6 +53,13 @@ const AboutSection: React.FC<AboutSectionProps> = ({ onFaqClick }) => {
       style={maskStyle}
       aria-hidden
     />
+    {maskPos !== null && (
+      <div
+        className="stdb-aperture-crosshair"
+        style={{ left: maskPos.x, top: maskPos.y }}
+        aria-hidden
+      />
+    )}
     <div className="stdb-aperture-content">
     <div className={`${uiTheme.sectionLabel} stdb-section-label-spaced`}>
       ABOUT

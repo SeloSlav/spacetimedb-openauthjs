@@ -43,6 +43,10 @@ body {
   text-align: center;
 }
 
+.container.stdb-aperture-active {
+  cursor: none;
+}
+
 /* Aperture split: background (masked) + content (on top, text always visible) */
 .container-bg {
   position: absolute;

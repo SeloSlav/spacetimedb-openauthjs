@@ -181,6 +181,44 @@
   box-sizing: border-box;
 }
 
+.stdb-aperture-card.stdb-aperture-active {
+  cursor: none;
+}
+
+/* Telescope crosshair - sharp, no feathering */
+.stdb-aperture-crosshair {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.stdb-aperture-crosshair::before,
+.stdb-aperture-crosshair::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: var(--stdb-green);
+  box-shadow: 0 0 4px var(--stdb-green), 0 0 0 1px rgba(0, 0, 0, 0.9);
+}
+
+.stdb-aperture-crosshair::before {
+  width: 48px;
+  height: 1px;
+  margin-left: -24px;
+  margin-top: -0.5px;
+}
+
+.stdb-aperture-crosshair::after {
+  width: 1px;
+  height: 48px;
+  margin-left: -0.5px;
+  margin-top: -24px;
+}
+
 .stdb-aperture-bg {
   position: absolute;
   inset: 0;

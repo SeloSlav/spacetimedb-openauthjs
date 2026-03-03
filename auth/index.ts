@@ -215,7 +215,7 @@ const AUTH_SPOTLIGHT_SCRIPT = `
   document.addEventListener('DOMContentLoaded',function(){
     var el=document.querySelector('.container');
     if(!el)return;
-    var inner=70,outer=140;
+    var r=80;
     var bg=document.createElement('div');
     bg.className='container-bg';
     var content=document.createElement('div');
@@ -223,14 +223,24 @@ const AUTH_SPOTLIGHT_SCRIPT = `
     while(el.firstChild)content.appendChild(el.firstChild);
     el.appendChild(bg);
     el.appendChild(content);
+    var crosshair=document.createElement('div');
+    crosshair.className='stdb-aperture-crosshair';
+    crosshair.setAttribute('aria-hidden','true');
+    crosshair.style.display='none';
+    el.appendChild(crosshair);
     el.addEventListener('mousemove',function(e){
       var rect=el.getBoundingClientRect();
       var x=e.clientX-rect.left,y=e.clientY-rect.top;
-      bg.style.webkitMaskImage='radial-gradient(circle at '+x+'px '+y+'px, transparent 0%, transparent '+inner+'px, black '+outer+'px)';
-      bg.style.maskImage='radial-gradient(circle at '+x+'px '+y+'px, transparent 0%, transparent '+inner+'px, black '+outer+'px)';
+      bg.style.webkitMaskImage='radial-gradient(circle at '+x+'px '+y+'px, transparent 0%, transparent '+r+'px, black '+r+'px)';
+      bg.style.maskImage='radial-gradient(circle at '+x+'px '+y+'px, transparent 0%, transparent '+r+'px, black '+r+'px)';
+      crosshair.style.left=x+'px';crosshair.style.top=y+'px';
+      crosshair.style.display='block';
+      el.classList.add('stdb-aperture-active');
     });
     el.addEventListener('mouseleave',function(){
       bg.style.webkitMaskImage='';bg.style.maskImage='';
+      crosshair.style.display='none';
+      el.classList.remove('stdb-aperture-active');
     });
   });
 })();
