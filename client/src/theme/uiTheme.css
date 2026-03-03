@@ -1,0 +1,75 @@
+:root {
+  /* Balkan Theme Colors */
+  --balkan-red: #b71c1c;
+  --balkan-blue: #0d47a1;
+  --balkan-gold: #ffd700;
+  --balkan-cream: #f5f5dc;
+  --balkan-dark-wood: #3e2723;
+  --balkan-light-wood: #8d6e63;
+  --balkan-light-blue: #90caf9;
+
+  /* UI Specifics */
+  --hud-bg: rgba(62, 39, 35, 0.85); /* Dark wood semi-transparent */
+  --hud-border: 2px solid var(--balkan-gold);
+  --hud-text: var(--balkan-cream);
+  --hud-text-shadow: 1px 1px 0 #000;
+  
+  /* Fonts */
+  --font-main: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  --font-serif: 'Georgia', 'Times New Roman', Times, serif;
+
+  /* Scrollbar (Balkan theme) */
+  --scrollbar-track: rgba(62, 39, 35, 0.4);
+  --scrollbar-thumb: var(--balkan-light-wood);
+  --scrollbar-thumb-hover: var(--balkan-gold);
+  --scrollbar-width: 8px;
+}
+
+.balkan-panel {
+  background: var(--hud-bg);
+  border: var(--hud-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+  color: var(--hud-text);
+  font-family: var(--font-main);
+  position: relative;
+}
+
+/* Decorative corner flourishes (simulated with pseudo-elements) */
+.balkan-panel::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  right: 2px;
+  bottom: 2px;
+  border: 1px dashed var(--balkan-light-wood);
+  pointer-events: none;
+}
+
+.balkan-button {
+  background: var(--balkan-red);
+  color: white;
+  border: 1px solid var(--balkan-dark-wood);
+  padding: 8px 16px;
+  font-family: var(--font-main);
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 2px 2px rgba(0,0,0,0.2);
+}
+
+.balkan-button:hover {
+  background: #d32f2f;
+  transform: translateY(-1px);
+}
+
+.balkan-button:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.balkan-text-shadow {
+  text-shadow: var(--hud-text-shadow);
+}
