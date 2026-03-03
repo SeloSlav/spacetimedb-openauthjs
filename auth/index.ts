@@ -455,15 +455,16 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   });
 
   // --- CORS Middleware --- 
-  // Allow localhost and 127.0.0.1 on any port for local dev
+  const allowedOrigins = ['http://localhost:5173', 'http://localhost:5176'];
   app.use('*', cors({ 
       origin: (origin) => {
-        if (!origin) return 'http://localhost:5173';
+        if (!origin) return allowedOrigins[0];
         try {
           const u = new URL(origin);
           if ((u.hostname === 'localhost' || u.hostname === '127.0.0.1') && u.protocol === 'http:') return origin;
+          if (allowedOrigins.includes(origin)) return origin;
         } catch { /* ignore */ }
-        return 'http://localhost:5173';
+        return allowedOrigins[0];
       },
       allowMethods: ['GET', 'POST', 'OPTIONS'],
       allowHeaders: ['Content-Type', 'Authorization'],

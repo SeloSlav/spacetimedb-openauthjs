@@ -1,0 +1,55 @@
+---
+description: Client data flow and ownership boundaries for SpacetimeDB-backed React state
+globs: client/src/**/*.{ts,tsx}
+alwaysApply: false
+---
+# Client-Side Data Flow Patterns
+
+Use this as the source of truth for who owns data at each layer.
+
+## Pipeline
+
+`SpacetimeDB` -> `client/src/generated` -> `useSpacetimeTables` -> `App` -> `GameScreen` -> `GameCanvas` -> specialized hooks.
+
+## Ownership Boundaries
+
+### 1) `useSpacetimeTables.ts` owns replicated table state
+- Keep table state in `Map<string, T>` keyed by `.toString()` IDs.
+- Handle insert/update/delete here and emit stable, minimal objects upward.
+- For high-frequency tables, only commit updates when relevant fields changed.
+
+### 2) `App.tsx` and `GameScreen.tsx` are orchestration layers
+- Wire data through props.
+- Avoid gameplay logic and expensive transforms in these layers.
+
+### 3) `GameCanvas.tsx` orchestrates rendering and high-frequency refs
+- Consume hook outputs and pass them to rendering/input systems.
+- Keep per-frame mutable state in refs (not React state) to avoid render churn.
+- `ySortedEntitiesRef` mirrors `useEntityFiltering` output for render-loop access.
+
+### 4) Specialized hooks own domain logic
+- `useEntityFiltering`: viewport culling + canonical y-sorted entity list.
+- `useInteractionFinder`: nearest interactable detection.
+- `useInputHandler`: reducer invocation and input policy.
+
+## Y-Sort Rule of Thumb
+
+- Y-sort policy lives in `useEntityFiltering.ts`.
+- `GameCanvas.tsx` should consume pre-sorted entities, not reimplement sort rules.
+- If a new entity affects layering, update `useEntityFiltering.ts` (and related visual config), not random render callsites.
+
+## Adding a New Entity Type
+
+1. Add table subscription + state shape in `useSpacetimeTables.ts`.
+2. Thread data through `App.tsx` and `GameScreen.tsx` props.
+3. Integrate into `GameCanvas.tsx` inputs.
+4. Add to `useEntityFiltering.ts` if it is rendered in-world.
+5. Add to `useInteractionFinder.ts` / `useInputHandler.ts` if interactable.
+6. Keep IDs normalized to strings for map keys.
+
+## Performance Guardrails
+
+- Do not call `setState` from render loops.
+- Prefer refs for >30fps data paths.
+- Memoize derived collections; avoid rebuilding large arrays/maps per frame.
+- Batch updates where possible and keep dependency arrays tight.

@@ -1,0 +1,46 @@
+---
+description: React and canvas performance guardrails for gameplay and render-loop code
+globs: client/src/**/*.{ts,tsx}
+alwaysApply: false
+---
+# Multiplayer Client Performance Tips
+
+Prioritize stable 60fps and low input latency. Favor predictable frame-time over clever abstractions.
+
+## Non-Negotiables
+
+1. Do not call `setState` from per-frame loops (`requestAnimationFrame` paths).
+2. Keep high-frequency values in refs (`useRef`) instead of state.
+3. Avoid reallocating large arrays/maps in render hot paths.
+4. Keep sort/filter logic centralized and memoized.
+
+## GameCanvas Hot-Path Patterns
+
+- Follow current pattern: refs like `ySortedEntitiesRef`, `renderGameDepsRef`, `minimapDrawRef` feed the RAF loop.
+- Sync refs from React state with small `useEffect` bridges, then read refs inside draw/update loops.
+- Keep minimap and canvas drawing off the React render path whenever possible.
+
+## React Patterns
+
+- Use `useMemo` for expensive derived collections (visible entities, sorted entities, lookup maps).
+- Use `useCallback` for handlers passed to hooks/components that rely on stable references.
+- Keep dependency arrays tight and intentional; avoid accidental re-computation cascades.
+- Co-locate high-frequency logic in hooks that already run outside React commit pressure.
+
+## Entity and Sorting Performance
+
+- Run viewport culling before expensive rendering work.
+- Keep Y-sort policy in one place (`useEntityFiltering.ts`), then consume sorted output.
+- Only recalculate when inputs actually changed; reuse cached results between frames.
+
+## Memory and Cleanup
+
+- Cancel every `requestAnimationFrame` loop on cleanup.
+- Remove event listeners/timers in `useEffect` cleanup.
+- Reuse scratch objects where practical in tight loops to reduce GC spikes.
+
+## Measurement
+
+- Use `performance.now()` around expensive sections.
+- Profile frame-time spikes in browser performance tools before optimizing blindly.
+- Track improvements with objective metrics (ms/frame, dropped frames), not "feels faster."

@@ -53,6 +53,14 @@
   --stdb-btn-danger-text: #ff6b6b;
   --stdb-btn-disabled-bg: rgba(60, 60, 60, 0.6);
   --stdb-btn-disabled-text: rgba(255, 255, 255, 0.4);
+  --stdb-error: #ff6b6b;
+  --stdb-tetris-piece-i: #00c2ff;
+  --stdb-tetris-piece-o: #ffd400;
+  --stdb-tetris-piece-t: #c06bff;
+  --stdb-tetris-piece-s: #39ff9d;
+  --stdb-tetris-piece-z: #ff5e6c;
+  --stdb-tetris-piece-j: #5683ff;
+  --stdb-tetris-piece-l: #ff9f40;
 
   /* Fonts */
   --stdb-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

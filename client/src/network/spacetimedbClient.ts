@@ -16,18 +16,42 @@ let activeConnectionId = 0;
 
 export type Identity = import("spacetimedb").Identity;
 
+function decodeJwtSubject(token: string | null): string | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const json = JSON.parse(window.atob(padded)) as { sub?: unknown; userId?: unknown };
+    if (typeof json.sub === "string" && json.sub.length > 0) return json.sub;
+    if (typeof json.userId === "string" && json.userId.length > 0) return json.userId;
+  } catch {
+    // If token is opaque or malformed, fall back to strict token equality.
+  }
+  return null;
+}
+
+function isSameAuthPrincipal(a: string, b: string | null): boolean {
+  if (!b) return false;
+  if (a === b) return true;
+  const subA = decodeJwtSubject(a);
+  const subB = decodeJwtSubject(b);
+  return !!subA && !!subB && subA === subB;
+}
+
 export function connect(
   token: string,
   onIdentity?: (identity: Identity) => void,
   onConnectError?: (error: unknown) => void,
   onDisconnect?: () => void
 ): DbConnection {
-  // Reuse only a fully connected instance for the same token.
-  // Never reuse "connecting" instances: they can carry stale callbacks
-  // from an earlier mount/effect and lead to ghost sessions.
-  if (connection && connectionToken === token && connectionStatus === "connected") {
+  // Reuse an existing connection for the same authenticated principal.
+  // Token refresh can rotate token strings without changing identity.
+  if (connection && connectionStatus !== "disconnected" && isSameAuthPrincipal(token, connectionToken)) {
+    connectionToken = token;
     const conn = connection as { identity?: import("spacetimedb").Identity };
-    if (conn.identity && onIdentity) onIdentity(conn.identity);
+    if (connectionStatus === "connected" && conn.identity && onIdentity) onIdentity(conn.identity);
     return connection;
   }
   if (connection) {

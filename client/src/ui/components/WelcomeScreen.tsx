@@ -112,7 +112,6 @@ export function WelcomeScreen() {
         <p style={{ color: "var(--stdb-text-muted)", marginBottom: "40px", fontSize: "15px" }}>
           Your profile is synced in real time. Edit below to see SpacetimeDB in action.
         </p>
-
         {/* Profile card */}
         <section
           className="stdb-panel"

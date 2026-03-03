@@ -1,8 +1,7 @@
-//! SpacetimeDB auth demo - User table, set_username, set_bio reducers.
+//! SpacetimeDB auth demo module.
 
 use spacetimedb::{reducer, ReducerContext, Table};
 
-/// Player identity, display name, and bio. Created on connect; username/bio set by client after auth.
 #[spacetimedb::table(accessor = user, public)]
 pub struct User {
     #[primary_key]
@@ -10,6 +9,11 @@ pub struct User {
     pub username: Option<String>,
     pub bio: Option<String>,
     pub online: bool,
+}
+
+#[reducer(init)]
+pub fn init(ctx: &ReducerContext) {
+    let _ = ctx;
 }
 
 #[reducer(client_connected)]
@@ -34,7 +38,6 @@ pub fn client_disconnected(ctx: &ReducerContext) {
 }
 
 #[reducer]
-/// Set the player's display name (chosen after login).
 pub fn set_username(ctx: &ReducerContext, username: String) -> Result<(), String> {
     let username = username.trim().to_string();
     if username.is_empty() {
@@ -52,7 +55,6 @@ pub fn set_username(ctx: &ReducerContext, username: String) -> Result<(), String
 }
 
 #[reducer]
-/// Update the player's bio.
 pub fn set_bio(ctx: &ReducerContext, bio: String) -> Result<(), String> {
     let bio = bio.trim().to_string();
     if let Some(user) = ctx.db.user().identity().find(&ctx.sender()) {

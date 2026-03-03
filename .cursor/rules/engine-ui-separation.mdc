@@ -1,0 +1,43 @@
+---
+description: Enforce engine/UI separation of concerns in client runtime work
+globs: client/src/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Engine and React Separation
+
+Use this boundary for all gameplay/runtime features.
+
+## Core Rule
+
+- Engine owns time, simulation, networking subscriptions, prediction/reconciliation, and Three object mutation.
+- React owns UI rendering, user interaction widgets, and dispatching intents to engine.
+
+## Required Architecture
+
+- Keep runtime logic in `client/src/engine/**` and `client/src/gameworld3d/**`.
+- UI components must read engine state through snapshot/store hooks (`useSyncExternalStore` pattern).
+- UI components must not directly mutate world/Three objects or run gameplay RAF loops.
+
+## Do / Do Not
+
+- Do expose minimal engine API (`start`, `stop`, `configure`, `dispatch`, `getSnapshot`, `subscribe`).
+- Do emit low-frequency UI snapshots (change-based or throttled), while keeping high-frequency state internal.
+- Do not place authoritative simulation state in React component state.
+- Do not add direct SpacetimeDB gameplay subscriptions in UI components when an engine adapter can own them.
+
+## Examples
+
+```ts
+// ❌ BAD: UI drives simulation timing
+useEffect(() => {
+  let raf = requestAnimationFrame(function tick() { stepSimulation(); });
+  return () => cancelAnimationFrame(raf);
+}, []);
+```
+
+```ts
+// ✅ GOOD: UI consumes engine snapshot and dispatches intent
+const snapshot = useEngineSnapshot(engine);
+engine.dispatch({ type: "ui/openPanel", panel: "inventory" });
+```
