@@ -71,10 +71,21 @@ Open [http://localhost:5173](http://localhost:5173). Sign in, choose a username,
 - `BCRYPT_ROUNDS` - Optional, default `12`
 - `RESEND_API_KEY` - Required only if password reset email is enabled
 - `RESEND_FROM` - Sender identity for reset emails
+- `ALLOWED_ORIGINS` - Comma-separated list of allowed CORS origins (see below)
 
 Notes:
 - In Railway, `ISSUER_URL` can fall back to `RAILWAY_STATIC_URL`.
 - Generate JWT keys with `cd auth && npm run keys`.
+
+### CORS Whitelist
+
+The auth server only accepts requests from origins in its allowlist. In development, all `localhost` origins are permitted automatically. In production, set `ALLOWED_ORIGINS` in `auth/.env`:
+
+```env
+ALLOWED_ORIGINS=https://myapp.com,https://www.myapp.com
+```
+
+If `ALLOWED_ORIGINS` is not set, the defaults are `http://localhost:5173` and `http://localhost:5176`. Add any additional origins (e.g. staging URLs) as a comma-separated list.
 
 ## Project Structure
 

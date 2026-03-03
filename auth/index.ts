@@ -19,6 +19,9 @@ const config = {
   jwtPrivateKey: process.env.JWT_PRIVATE_KEY,
   jwtPublicKey: process.env.JWT_PUBLIC_KEY,
   saltRounds: parseInt(process.env.BCRYPT_ROUNDS || '12'),
+  allowedOrigins: process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+    : ['http://localhost:5173', 'http://localhost:5176'],
 };
 
 console.log(`[Config] Environment: ${config.isDevelopment ? 'development' : 'production'}`);
@@ -454,9 +457,9 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
     `);
   });
 
-  // --- CORS Middleware --- 
-  const allowedOrigins = ['http://localhost:5173', 'http://localhost:5176'];
-  app.use('*', cors({ 
+  // --- CORS Middleware ---
+  const allowedOrigins = config.allowedOrigins;
+  app.use('*', cors({
       origin: (origin) => {
         if (!origin) return allowedOrigins[0];
         try {
