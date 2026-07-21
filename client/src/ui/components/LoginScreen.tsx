@@ -18,7 +18,7 @@ import { useAuth } from '../../contexts/AuthContext.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faGithub, faXTwitter } from '@fortawesome/free-brands-svg-icons';
 import { faBars, faTimes } from '@fortawesome/free-solid-svg-icons';
-import loginBackground from '../../assets/ui/login_background.jpg';
+import loginBackground from '../../assets/ui/login_background_v2.jpg';
 import '../../theme/uiTheme.ts';
 import AboutSection from './AboutSection.tsx';
 import FAQSection, { type FAQItem } from './FAQSection.tsx';
@@ -339,7 +339,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   connectionError,
   storedUsername,
   isSpacetimeConnected = true,
-  isSpacetimeReady: _isSpacetimeReady = true,
   retryConnection,
   onlinePlayerCount,
   maxPlayerCount,
@@ -439,7 +438,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     return () => {
       try {
         document.head.removeChild(preloadBackground);
-      } catch (e) {
+      } catch {
         // Elements might already be removed
       }
     };
@@ -696,8 +695,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
         className="stdb-main"
         style={{
           backgroundImage: backgroundLoaded ? `url(${loginBackground})` : 'none',
-          backgroundSize: '100% auto',
-          backgroundPosition: 'top center',
+          backgroundSize: isMobile ? 'auto 100vh' : '100% auto',
+          backgroundPosition: isMobile ? '16% top' : 'top center',
           backgroundRepeat: 'no-repeat',
           backgroundAttachment: 'scroll',
         }}
@@ -1131,4 +1130,4 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   );
 };
 
-export default LoginScreen; 
+export default LoginScreen;

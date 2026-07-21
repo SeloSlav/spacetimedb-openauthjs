@@ -21,6 +21,7 @@ const LOCAL_STORAGE_KEYS = {
     ACCESS_TOKEN: 'oidc_access_token',
     REFRESH_TOKEN: 'oidc_refresh_token',
     PKCE_VERIFIER: 'pkce_verifier',
+    OIDC_STATE: 'oidc_state',
 };
 
 interface UserProfile {
@@ -90,13 +91,9 @@ async function generatePkceChallenge(verifier: string): Promise<{ code_verifier:
 }
 
 function generateRandomString(length: number): string {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-    let result = '';
-    const charactersLength = characters.length;
-    for (let i = 0; i < length; i++) {
-        result += characters.charAt(Math.floor(Math.random() * charactersLength));
-    }
-    return result;
+    const bytes = new Uint8Array(Math.ceil((length * 3) / 4));
+    window.crypto.getRandomValues(bytes);
+    return arrayBufferToBase64Url(bytes.buffer).slice(0, length);
 }
 
 export const AuthProvider = ({ children }: AuthProviderProps) => {
@@ -128,15 +125,15 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         localStorage.setItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER, pkce.code_verifier);
 
         // 2. Generate State (for CSRF protection; validate on callback)
-        const _state = generateRandomString(32);
-        // Optional: Store state locally if needed for validation on callback
+        const state = generateRandomString(32);
+        sessionStorage.setItem(LOCAL_STORAGE_KEYS.OIDC_STATE, state);
 
         // 3. Construct Authorization URL
         const authUrl = new URL('/authorize', AUTH_SERVER_URL);
         authUrl.searchParams.set('client_id', OIDC_CLIENT_ID);
         authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
         authUrl.searchParams.set('response_type', 'code');
-        authUrl.searchParams.set('state', _state);
+        authUrl.searchParams.set('state', state);
         authUrl.searchParams.set('code_challenge', pkce.code_challenge);
         authUrl.searchParams.set('code_challenge_method', pkce.code_challenge_method);
         authUrl.searchParams.set('acr_values', 'pwd'); // Add acr_values
@@ -144,9 +141,9 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         // console.log("[AuthContext] Redirecting to manually constructed URL:", authUrl.toString());
         window.location.assign(authUrl.toString()); // Redirect user
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("[AuthContext] Error initiating manual login redirect:", error);
-        setAuthError(error.message || "Failed to start login process");
+        setAuthError(error instanceof Error ? error.message : "Failed to start login process");
         setIsLoading(false);
     }
   }, []); // Removed oidcClient dependency as we're not using its authorize method directly
@@ -158,13 +155,27 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     const queryParams = new URLSearchParams(window.location.search);
     const code = queryParams.get("code");
-    // TODO: validate queryParams.get("state") against stored state for CSRF
+    const error = queryParams.get("error");
+    const returnedState = queryParams.get("state");
+    const expectedState = sessionStorage.getItem(LOCAL_STORAGE_KEYS.OIDC_STATE);
+
+    if ((code || error) && (!returnedState || !expectedState || returnedState !== expectedState)) {
+        sessionStorage.removeItem(LOCAL_STORAGE_KEYS.OIDC_STATE);
+        localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
+        setAuthError("Authentication response could not be verified. Please sign in again.");
+        setIsLoading(false);
+        navigateToRoot();
+        return;
+    }
+
+    if (code || error) {
+        sessionStorage.removeItem(LOCAL_STORAGE_KEYS.OIDC_STATE);
+    }
 
     window.history.replaceState({}, document.title, window.location.pathname);
 
     if (!code) {
         // Check for error parameters (e.g., error=access_denied)
-        const error = queryParams.get("error");
         const errorDesc = queryParams.get("error_description");
         if (error) {
              setAuthError(`Authentication failed: ${error} ${errorDesc ? `(${errorDesc})` : ''}`);
@@ -180,6 +191,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
             }
         }
         setIsLoading(false);
+        navigateToRoot();
         return;
     }
 
@@ -245,13 +257,14 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
         navigateToRoot();
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("[AuthContext] Error handling redirect callback:", error);
-        setAuthError(error.message || "Failed to process login callback");
+        setAuthError(error instanceof Error ? error.message : "Failed to process login callback");
         // Clear potentially partial tokens
         clearTokens();
         setSpacetimeToken(null);
         setUserProfile(null);
+        navigateToRoot();
         // console.log("[AuthContext LOG] END: Error during callback handling.");
     } finally {
         setIsLoading(false);
@@ -298,6 +311,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     localStorage.removeItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
     localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
+    sessionStorage.removeItem(LOCAL_STORAGE_KEYS.OIDC_STATE);
     setSpacetimeToken(null);
     setUserProfile(null);
   };
@@ -525,4 +539,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   );
 };
 
+// Auth state and its hook intentionally share this module.
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

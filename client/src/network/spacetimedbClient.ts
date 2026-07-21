@@ -6,8 +6,12 @@
 import { DbConnection } from "../generated/index.ts";
 
 const isDev = import.meta.env.DEV || window.location.hostname === "localhost";
-const SPACETIME_URI = isDev ? "http://localhost:3000" : "https://maincloud.spacetimedb.com";
-const DB_NAME = isDev ? "spacetimedb-auth-demo-local" : "spacetimedb-auth-demo";
+const spacetimeUriFromEnv = (import.meta.env.VITE_SPACETIME_URI ?? "").trim();
+const databaseNameFromEnv = (import.meta.env.VITE_SPACETIME_DB_NAME ?? "").trim();
+const SPACETIME_URI = (
+  spacetimeUriFromEnv || (isDev ? "http://localhost:3000" : "https://maincloud.spacetimedb.com")
+).replace(/\/+$/, "");
+const DB_NAME = databaseNameFromEnv || (isDev ? "spacetimedb-auth-demo-local" : "spacetimedb-auth-demo");
 
 let connection: DbConnection | null = null;
 let connectionToken: string | null = null;
@@ -55,14 +59,19 @@ export function connect(
     return connection;
   }
   if (connection) {
-    try {
-      connection.disconnect();
-    } catch {
-      // Ignore disconnect errors while replacing a stale connection.
-    }
+    // Invalidate the old callbacks before disconnecting. Some transports invoke
+    // onDisconnect synchronously, which must not schedule a reconnect for the
+    // replacement connection.
+    activeConnectionId++;
+    const staleConnection = connection;
     connection = null;
     connectionToken = null;
     connectionStatus = "disconnected";
+    try {
+      staleConnection.disconnect();
+    } catch {
+      // Ignore disconnect errors while replacing a stale connection.
+    }
   }
 
   const connectionId = ++activeConnectionId;
@@ -71,6 +80,7 @@ export function connect(
   const conn = DbConnection.builder()
     .withUri(SPACETIME_URI)
     .withDatabaseName(DB_NAME)
+    .withConfirmedReads(false)
     .withToken(token)
     .onConnect((_conn, identity) => {
       if (connectionId !== activeConnectionId) return;
@@ -102,11 +112,12 @@ export function connect(
 
 export function disconnect(): void {
   activeConnectionId++;
-  if (connection) {
-    connection.disconnect();
-    connection = null;
-    connectionToken = null;
-    connectionStatus = "disconnected";
+  const activeConnection = connection;
+  connection = null;
+  connectionToken = null;
+  connectionStatus = "disconnected";
+  if (activeConnection) {
+    activeConnection.disconnect();
   }
 }
 

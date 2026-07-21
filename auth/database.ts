@@ -77,7 +77,7 @@ class DatabaseService {
       if (!parsed.resetTokens) parsed.resetTokens = [];
       if (!parsed.refreshTokens) parsed.refreshTokens = [];
       return parsed;
-    } catch (error) {
+    } catch {
       console.warn('[Database] Failed to read users.json, creating new file');
       const initialData: JsonStorage = { users: [], codes: [], resetTokens: [], refreshTokens: [] };
       this.writeJsonStorage(initialData);
@@ -148,8 +148,8 @@ class DatabaseService {
           VALUES (${user.userId}, ${user.email}, ${user.passwordHash})
         `;
         return true;
-      } catch (error: any) {
-        if (error.code === '23505') { // Unique constraint violation
+      } catch (error: unknown) {
+        if (typeof error === 'object' && error !== null && 'code' in error && error.code === '23505') { // Unique constraint violation
           return false;
         }
         throw error;
@@ -426,4 +426,4 @@ class DatabaseService {
   }
 }
 
-export const db = new DatabaseService(); 
+export const db = new DatabaseService();

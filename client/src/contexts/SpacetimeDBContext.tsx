@@ -48,6 +48,7 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
   const [myUsername, setMyUsername] = useState<string | null>(null);
   const [myBio, setMyBio] = useState<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([]);
+  const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [setUsernameError, setSetUsernameError] = useState<string | null>(null);
 
@@ -82,10 +83,13 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
   useEffect(() => {
     if (!authToken) {
       disconnect();
+      // Reset state when the external auth session disappears.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setConnection(null);
       setMyUsername(null);
       setMyBio(null);
       setOnlineUsers([]);
+      setIsConnected(false);
       setIsLoading(false);
       return;
     }
@@ -145,11 +149,15 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
       }
     }
 
-    function clearTimers() {
+    function clearProfileLoadTimeout() {
       if (profileLoadTimeout) {
         clearTimeout(profileLoadTimeout);
         profileLoadTimeout = null;
       }
+    }
+
+    function clearTimers() {
+      clearProfileLoadTimeout();
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
         reconnectTimeout = null;
@@ -158,6 +166,8 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
 
     function scheduleReconnect(reason: string) {
       if (cancelled || reconnectTimeout) return;
+      clearProfileLoadTimeout();
+      setIsConnected(false);
       if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
         setSetUsernameError(`Connection error: ${reason}. Please try again.`);
         setIsLoading(false);
@@ -176,6 +186,8 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
     }
 
     function doConnect() {
+      clearProfileLoadTimeout();
+      setIsConnected(false);
       setIsLoading(true);
       profileLoadTimeout = setTimeout(() => {
         if (cancelled) return;
@@ -187,6 +199,7 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
           (identity) => {
             reconnectAttempts = 0;
             setSetUsernameError(null);
+            setIsConnected(true);
             myIdentity = identity;
             const c = getConnection();
             if (!c) return;
@@ -199,11 +212,13 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
             const message = error instanceof Error ? error.message : "Connection to database failed";
             setSetUsernameError(message);
             setConnection(null);
+            setIsConnected(false);
             scheduleReconnect(message);
           },
           () => {
             if (cancelled) return;
             setConnection(null);
+            setIsConnected(false);
             scheduleReconnect("disconnected from server");
           }
         );
@@ -297,6 +312,7 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
       setMyUsername(null);
       setMyBio(null);
       setOnlineUsers([]);
+      setIsConnected(false);
     };
   }, [authToken]);
 
@@ -306,7 +322,7 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
         connection,
         myUsername,
         myBio,
-        isConnected: connection !== null,
+        isConnected,
         isLoading,
         setUsernameError,
         onlineUsers,
@@ -319,4 +335,6 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
   );
 }
 
+// Connection state and its hook intentionally share this module.
+// eslint-disable-next-line react-refresh/only-export-components
 export const useSpacetimeDB = () => useContext(SpacetimeDBContext);

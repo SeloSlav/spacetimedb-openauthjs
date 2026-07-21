@@ -31,9 +31,12 @@ WORKDIR /app
 COPY --from=auth-builder /app/auth/dist ./dist
 COPY --from=auth-builder /app/auth/package.json ./
 COPY --from=auth-builder /app/auth/node_modules ./node_modules
+COPY --from=auth-builder /app/auth/favicon.png ./favicon.png
+COPY --from=auth-builder /app/auth/login_background_v2.jpg ./login_background_v2.jpg
 
 # Copy built client (auth serves SPA from /)
 COPY --from=client-builder /app/dist ./client-dist
+COPY --from=client-builder /app/client/src/theme ./client/src/theme
 
 # Railway sets PORT; default 4001 for local
 ENV NODE_ENV=production

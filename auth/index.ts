@@ -33,9 +33,7 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { issuer } from '@openauthjs/openauth';
 import { PasswordProvider } from '@openauthjs/openauth/provider/password';
-import { PasswordUI } from '@openauthjs/openauth/ui/password';
 import { MemoryStorage } from '@openauthjs/openauth/storage/memory';
-import { Select } from '@openauthjs/openauth/ui/select';
 import { subjects } from './subjects.js';
 
 import { v4 as uuidv4 } from 'uuid';
@@ -48,7 +46,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 // Import our new modules
-import { db, type UserRecord, type AuthCodeData, type PasswordResetToken } from './database.js';
+import { db, type UserRecord } from './database.js';
 import { initializeKeys, getPrivateKey, getPublicJWK, keyId } from './jwt-keys.js';
 import { Resend } from 'resend';
 
@@ -72,6 +70,50 @@ const CLIENT_THEME_DIR = CLIENT_THEME_DIR_CANDIDATES.find((candidate) =>
   fs.existsSync(path.join(candidate, 'uiTheme.css'))
 ) ?? CLIENT_THEME_DIR_CANDIDATES[0];
 const SHARED_THEME_FILES = new Set(['uiTheme.css', 'authPages.css']);
+const allowedRedirectUris = new Set(
+  [
+    ...(process.env.ALLOWED_REDIRECT_URIS?.split(',') ?? []),
+    ...config.allowedOrigins.map((origin) => `${origin.replace(/\/$/, '')}/callback`),
+    `${ISSUER_URL.replace(/\/$/, '')}/callback`,
+  ]
+    .map((uri) => uri.trim())
+    .filter(Boolean)
+    .map((uri) => {
+      try {
+        return new URL(uri).toString();
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean)
+);
+
+function decodeRedirectUri(raw: string): string | null {
+  let decoded = raw;
+  try {
+    for (let pass = 0; pass < 2; pass += 1) {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    }
+    return new URL(decoded).toString();
+  } catch {
+    return null;
+  }
+}
+
+function isValidAuthorizationRequest(
+  clientId: string,
+  redirectUri: string | null,
+  codeChallenge: string,
+  codeChallengeMethod: string
+): redirectUri is string {
+  return clientId === CLIENT_ID
+    && redirectUri !== null
+    && allowedRedirectUris.has(redirectUri)
+    && codeChallengeMethod === 'S256'
+    && /^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge);
+}
 
 // Initialize Resend for email sending
 const resendApiKey = process.env.RESEND_API_KEY;
@@ -146,7 +188,13 @@ async function handlePasswordSendCode(email: string, code: string): Promise<void
 /* Provider Handler Wrappers (Match expected signatures)                      */
 /* -------------------------------------------------------------------------- */
 
-async function handlePasswordRegister(ctx: any, state: any, form?: FormData): Promise<Response> {
+type PasswordFlowRequest = Request & {
+  fail?: (value: Record<string, string>) => Response;
+  success?: (value: unknown) => Response;
+};
+
+async function handlePasswordRegister(ctx: PasswordFlowRequest, state: unknown, form?: FormData): Promise<Response> {
+    void state;
     const email = form?.get('email') as string | undefined;
     const password = form?.get('password') as string | undefined;
     if (!email || !password) {
@@ -159,7 +207,7 @@ async function handlePasswordRegister(ctx: any, state: any, form?: FormData): Pr
     return ctx.success ? ctx.success({ user: result }) : new Response(JSON.stringify(result), { status: 200 });
 }
 
-async function handlePasswordLogin(ctx: any, form?: FormData): Promise<Response> {
+async function handlePasswordLogin(ctx: PasswordFlowRequest, form?: FormData): Promise<Response> {
     const email = form?.get('email') as string | undefined;
     const password = form?.get('password') as string | undefined;
      if (!email || !password) {
@@ -172,8 +220,10 @@ async function handlePasswordLogin(ctx: any, form?: FormData): Promise<Response>
     return ctx.success ? ctx.success({ user: result }) : new Response(JSON.stringify(result), { status: 200 });
 }
 
-async function handlePasswordChange(ctx: any, state: any, form?: FormData): Promise<Response> {
-    const userId = state?.userId;
+async function handlePasswordChange(ctx: PasswordFlowRequest, state: unknown, form?: FormData): Promise<Response> {
+    const userId = typeof state === 'object' && state !== null && 'userId' in state && typeof state.userId === 'string'
+      ? state.userId
+      : undefined;
     const newPassword = form?.get('password') as string | undefined;
     if (!userId || !newPassword) {
        return ctx.fail ? ctx.fail({ error: 'invalid_request' }) : new Response('Missing user context or new password', { status: 400 });
@@ -198,12 +248,20 @@ const password = PasswordProvider({
 /* -------------------------------------------------------------------------- */
 /* Success callback                                                           */
 /* -------------------------------------------------------------------------- */
-async function success(ctx: any, value: any): Promise<Response> { 
-  console.log("[IssuerSuccess] Flow completed. Provider:", value?.provider, "Value:", value);
-  if (ctx && ctx.res) {
-      return ctx.res;
-  }
-  return new Response('Issuer Success OK', { status: 200 });
+interface AuthSuccessResponder {
+  subject(type: 'user', properties: { userId: string }): Promise<Response>;
+}
+
+async function success(response: AuthSuccessResponder, value: unknown): Promise<Response> {
+  const email = typeof value === 'object' && value !== null && 'email' in value && typeof value.email === 'string'
+    ? value.email.toLowerCase()
+    : null;
+  if (!email) return new Response('Invalid password identity', { status: 400 });
+
+  const user = await db.getUserByEmail(email);
+  if (!user) return new Response('Account is not registered for this client', { status: 403 });
+
+  return response.subject('user', { userId: user.userId });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -335,9 +393,9 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
           <h1 class="form-title">Reset Password</h1>
           ${error ? `<div class="error-message">${error}</div>` : ''}
           ${showForm ? `
-          <p class="form-description">Enter a new password for <strong>${email}</strong></p>
+          <p class="form-description">Enter a new password for <strong>${email ? escapeHtml(email) : ''}</strong></p>
           <form method="post">
-              <input type="hidden" name="token" value="${token}">
+              <input type="hidden" name="token" value="${token ? escapeHtml(token) : ''}">
               <input type="hidden" name="return_to" value="${safeReturnTo}">
               <div class="form-group">
                   <label for="password">New Password</label>
@@ -396,35 +454,21 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
       c.header('Content-Type', 'image/png');
       c.header('Cache-Control', 'public, max-age=86400');
       return c.body(imageBuffer);
-    } catch (error) {
+    } catch {
       return c.text('Not found', 404);
     }
   });
 
-  // --- Static File Serving for login_background.jpg ---
-  app.get('/login_background.jpg', async (c) => {
+  // --- Static File Serving for the auth-page background ---
+  app.get('/login_background_v2.jpg', async (c) => {
     try {
-      const imagePath = path.join(process.cwd(), 'login_background.jpg');
+      const imagePath = path.join(process.cwd(), 'login_background_v2.jpg');
       const imageBuffer = fs.readFileSync(imagePath);
       c.header('Content-Type', 'image/jpeg');
       c.header('Cache-Control', 'public, max-age=3600');
       return c.body(imageBuffer);
     } catch (error) {
-      console.error('[Static] Failed to serve login_background.jpg:', error);
-      return c.text('Image not found', 404);
-    }
-  });
-
-  // --- Also serve at the wrong path to fix current issue ---
-  app.get('/auth/password/login_background.jpg', async (c) => {
-    try {
-      const imagePath = path.join(process.cwd(), 'login_background.jpg');
-      const imageBuffer = fs.readFileSync(imagePath);
-      c.header('Content-Type', 'image/jpeg');
-      c.header('Cache-Control', 'public, max-age=3600');
-      return c.body(imageBuffer);
-    } catch (error) {
-      console.error('[Static] Failed to serve login_background.jpg:', error);
+      console.error('[Static] Failed to serve login_background_v2.jpg:', error);
       return c.text('Image not found', 404);
     }
   });
@@ -550,6 +594,13 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
       const acrValues = query['acr_values'];
 
       if (acrValues === 'pwd') {
+          const clientId = query['client_id'] || '';
+          const redirectUri = decodeRedirectUri(query['redirect_uri'] || '');
+          const codeChallenge = query['code_challenge'] || '';
+          const codeChallengeMethod = query['code_challenge_method'] || '';
+          if (query['response_type'] !== 'code' || !isValidAuthorizationRequest(clientId, redirectUri, codeChallenge, codeChallengeMethod)) {
+              return c.json({ error: 'invalid_request' }, 400);
+          }
           console.log('[AuthServer] Intercepting /authorize for password flow (acr_values=pwd). Redirecting to /auth/password/login');
           
           const loginUrl = new URL('/auth/password/login', ISSUER_URL); 
@@ -595,11 +646,11 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
             <h1 class="form-title">Create Account</h1>
             
             <form method="post">
-                <input type="hidden" name="redirect_uri" value="${encodeURIComponent(redirect_uri)}">
-                <input type="hidden" name="state" value="${state || ''}">
-                <input type="hidden" name="code_challenge" value="${code_challenge}">
-                <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
-                <input type="hidden" name="client_id" value="${client_id}">
+                <input type="hidden" name="redirect_uri" value="${escapeHtml(encodeURIComponent(redirect_uri))}">
+                <input type="hidden" name="state" value="${escapeHtml(state)}">
+                <input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
+                <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method)}">
+                <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
                 
                 <div class="form-group">
                     <label for="email">Email Address</label>
@@ -638,20 +689,17 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
          return c.text('Missing required form fields.', 400);
     }
 
+    const redirect_uri = decodeRedirectUri(redirect_uri_from_form);
+    if (!isValidAuthorizationRequest(client_id, redirect_uri, code_challenge, code_challenge_method)) {
+        console.error('[AuthServer] POST Register: Invalid client, redirect URI, or PKCE parameters.');
+        return c.text('Invalid authorization request.', 400);
+    }
+
     const userResult = await _handlePasswordRegisterSimple(email, password);
 
     if (userResult) {
         const userId = userResult.id;
         const code = uuidv4();
-        let redirect_uri: string;
-        try {
-            const decoded_once = decodeURIComponent(redirect_uri_from_form);
-            redirect_uri = decodeURIComponent(decoded_once);
-            console.log(`[AuthServer] POST Register: Decoded redirect_uri: ${redirect_uri}`);
-        } catch (e) {
-            console.error('[AuthServer] POST Register: Failed to double-decode redirect_uri:', redirect_uri_from_form, e);
-            return c.text('Invalid redirect URI encoding.', 400);
-        }
         await db.storeAuthCode(code, { userId, codeChallenge: code_challenge, codeChallengeMethod: code_challenge_method, clientId: client_id, redirectUri: redirect_uri });
         try {
             const redirect = new URL(redirect_uri);
@@ -686,12 +734,12 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
                 <h1 class="form-title">Create Account</h1>
                 <p class="error-message">Registration failed. That email might already be taken.</p>
                 <form method="post">
-                     <input type="hidden" name="redirect_uri" value="${redirect_uri_from_form}">
-                     <input type="hidden" name="state" value="${state || ''}">
-                     <input type="hidden" name="code_challenge" value="${code_challenge}">
-                     <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
-                     <input type="hidden" name="client_id" value="${client_id}">
-                     <div class="form-group"><label for="email">Email Address</label><input id="email" name="email" type="email" value="${email || ''}" required></div>
+                     <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri_from_form)}">
+                     <input type="hidden" name="state" value="${escapeHtml(state || '')}">
+                     <input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
+                     <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method)}">
+                     <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
+                     <div class="form-group"><label for="email">Email Address</label><input id="email" name="email" type="email" value="${escapeHtml(email || '')}" required></div>
                      <div class="form-group"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="new-password" required></div>
                      <button type="submit" class="submit-button">Create Account</button>
                 </form>
@@ -731,11 +779,11 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
             <h1 class="form-title">Sign In</h1>
             
             <form method="post">
-                <input type="hidden" name="redirect_uri" value="${encodeURIComponent(redirect_uri)}">
-                <input type="hidden" name="state" value="${state || ''}">
-                <input type="hidden" name="code_challenge" value="${code_challenge}">
-                <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
-                <input type="hidden" name="client_id" value="${client_id}">
+                <input type="hidden" name="redirect_uri" value="${escapeHtml(encodeURIComponent(redirect_uri))}">
+                <input type="hidden" name="state" value="${escapeHtml(state)}">
+                <input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
+                <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method)}">
+                <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
                 
                 <div class="form-group">
                     <label for="email">Email Address</label>
@@ -776,20 +824,17 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
            return c.text('Missing required form fields.', 400);
       }
 
+      const redirect_uri = decodeRedirectUri(redirect_uri_from_form);
+      if (!isValidAuthorizationRequest(client_id, redirect_uri, code_challenge, code_challenge_method)) {
+          console.error('[AuthServer] POST Login: Invalid client, redirect URI, or PKCE parameters.');
+          return c.text('Invalid authorization request.', 400);
+      }
+
       const userResult = await _handlePasswordLoginSimple(email, password);
 
       if (userResult) {
           const userId = userResult.id;
           const code = uuidv4();
-          let redirect_uri: string;
-          try {
-              const decoded_once = decodeURIComponent(redirect_uri_from_form);
-              redirect_uri = decodeURIComponent(decoded_once);
-              console.log(`[AuthServer] POST Login: Decoded redirect_uri: ${redirect_uri}`);
-          } catch (e) {
-              console.error('[AuthServer] POST Login: Failed to double-decode redirect_uri:', redirect_uri_from_form, e);
-              return c.text('Invalid redirect URI encoding.', 400);
-          }
           await db.storeAuthCode(code, { userId, codeChallenge: code_challenge, codeChallengeMethod: code_challenge_method, clientId: client_id, redirectUri: redirect_uri });
           try {
               const redirect = new URL(redirect_uri);
@@ -805,7 +850,7 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
           console.warn(`[AuthServer] POST Login Failed for email: ${email}`);
           const query = { redirect_uri: redirect_uri_from_form, state, code_challenge, code_challenge_method, client_id };
           const queryString = Object.entries(query)
-              .filter(([_, value]) => value != null)
+              .filter(([, value]) => value != null)
               .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value as string)}`)
               .join('&');
               
@@ -829,14 +874,14 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
                     <h1 class="form-title">Sign In</h1>
                     <p class="error-message">Invalid email or password. Please try again.</p>
                     <form method="post">
-                        <input type="hidden" name="redirect_uri" value="${redirect_uri_from_form}">
-                        <input type="hidden" name="state" value="${state || ''}">
-                        <input type="hidden" name="code_challenge" value="${code_challenge}">
-                        <input type="hidden" name="code_challenge_method" value="${code_challenge_method}">
-                        <input type="hidden" name="client_id" value="${client_id}">
+                        <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri_from_form)}">
+                        <input type="hidden" name="state" value="${escapeHtml(state || '')}">
+                        <input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
+                        <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method)}">
+                        <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
                         <div class="form-group">
                             <label for="email">Email Address</label>
-                            <input id="email" name="email" type="email" value="${email || ''}" required placeholder="Enter your email">
+                            <input id="email" name="email" type="email" value="${escapeHtml(email || '')}" required placeholder="Enter your email">
                         </div>
                         <div class="form-group">
                             <label for="password">Password</label>
@@ -1158,8 +1203,8 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
       return c.text('invalid_grant', 400);
     }
 
-    const redirectUri = typeof redirectUriForm === 'string' ? redirectUriForm : '';
-    if (redirectUri && redirectUri !== codeData.redirectUri) {
+    const redirectUri = typeof redirectUriForm === 'string' ? decodeRedirectUri(redirectUriForm) : null;
+    if (!redirectUri || redirectUri !== codeData.redirectUri) {
       console.error(`[AuthServer] /token: redirect_uri mismatch.`);
       await db.deleteAuthCode(code);
       return c.text('invalid_grant', 400);
@@ -1269,4 +1314,4 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
 
   console.log(`🚀 Auth server → ${ISSUER_URL}`);
   serve({ fetch: app.fetch, port: PORT });
-})(); 
+})();

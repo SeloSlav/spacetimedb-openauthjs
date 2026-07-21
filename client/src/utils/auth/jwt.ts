@@ -4,7 +4,15 @@
  * or using a more robust library if needed client-side (though generally discouraged).
  */
 
-export function parseJwt(token: string): any {
+export interface JwtPayload {
+  exp?: number;
+  sub?: string;
+  userId?: string;
+  email?: string;
+  [claim: string]: unknown;
+}
+
+export function parseJwt(token: string): JwtPayload {
     try {
       const base64Url = token.split('.')[1]; // Get the payload part
       if (!base64Url) {
@@ -20,7 +28,11 @@ export function parseJwt(token: string): any {
           .join('')
       );
 
-      return JSON.parse(jsonPayload);
+      const payload: unknown = JSON.parse(jsonPayload);
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        throw new Error('Invalid JWT payload');
+      }
+      return payload as JwtPayload;
     } catch (error) {
         console.error("Error decoding JWT:", error);
         throw new Error('Could not parse JWT token');
