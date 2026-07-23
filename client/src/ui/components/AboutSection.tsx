@@ -71,7 +71,7 @@ const AboutSection: React.FC<AboutSectionProps> = ({ onFaqClick }) => {
     </h2>
 
     <p className="stdb-about-p">
-      <strong>SpacetimeDB Auth Demo</strong> shows login, username selection, and logout with <strong>SpacetimeDB</strong>, <strong>OpenAuth</strong>, and <strong>Hono</strong>.
+      <strong>SpacetimeDB Auth Demo</strong> shows login, username selection, and logout with <strong>SpacetimeDB</strong>, <strong>OIDC/PKCE</strong>, and <strong>Hono</strong>.
       Sign in with your email, choose a username, and see a welcome message. The app demonstrates token-based auth for SpacetimeDB.
     </p>
 

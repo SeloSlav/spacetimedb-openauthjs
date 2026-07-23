@@ -1,7 +1,5 @@
-// index.ts - Updated for production deployment
 /**
- * OpenAuth issuer + Hono server with password UI and custom OIDC code/token flow.
- * Now using database storage and environment-based JWT keys.
+ * Hono OIDC issuer with password UI, PKCE, database storage, and managed JWT keys.
  */
 import dotenv from 'dotenv';
 
@@ -702,22 +700,22 @@ function renderStatusPage(opts: {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/png" href="/favicon.png" />
-  <title>SpacetimeDB Auth Demo - OpenAuth + SpacetimeDB</title>
-  <meta name="description" content="SpacetimeDB Auth Demo shows a complete OpenAuth + SpacetimeDB authentication flow with login, token issuance, refresh, and password reset." />
-  <meta name="keywords" content="SpacetimeDB, OpenAuth, OIDC, authentication demo, token refresh, password reset, realtime" />
+  <title>SpacetimeDB Auth Demo - OIDC + SpacetimeDB</title>
+  <meta name="description" content="SpacetimeDB Auth Demo shows a complete OIDC + SpacetimeDB authentication flow with login, token issuance, refresh, and password reset." />
+  <meta name="keywords" content="SpacetimeDB, OIDC, authentication demo, token refresh, password reset, realtime" />
   <meta name="author" content="SpacetimeDB Auth Demo" />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="${baseUrl}/document" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="SpacetimeDB Auth Demo - OpenAuth + SpacetimeDB" />
-  <meta property="og:description" content="An authentication demo that integrates OpenAuth (OIDC) with SpacetimeDB for realtime applications." />
+  <meta property="og:title" content="SpacetimeDB Auth Demo - OIDC + SpacetimeDB" />
+  <meta property="og:description" content="An authentication demo that integrates a self-hosted OIDC issuer with SpacetimeDB for realtime applications." />
   <meta property="og:image" content="${ogImage}" />
   <meta property="og:url" content="${baseUrl}/document" />
   <meta property="og:site_name" content="SpacetimeDB Auth Demo" />
   <meta property="og:locale" content="en_US" />
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="SpacetimeDB Auth Demo - OpenAuth + SpacetimeDB" />
-  <meta name="twitter:description" content="OpenAuth + SpacetimeDB authentication demo." />
+  <meta name="twitter:title" content="SpacetimeDB Auth Demo - OIDC + SpacetimeDB" />
+  <meta name="twitter:description" content="OIDC + SpacetimeDB authentication demo." />
   <meta name="twitter:image" content="${ogImage}" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -730,7 +728,7 @@ function renderStatusPage(opts: {
 </head>
 <body>
   <h1>SpacetimeDB Auth Demo</h1>
-  <p>An end-to-end authentication demo using OpenAuth, Hono, and SpacetimeDB.</p>
+  <p>An end-to-end authentication demo using OIDC, Hono, and SpacetimeDB.</p>
   <p>Includes sign in, token exchange, token refresh, and password reset flows.</p>
   <a href="https://github.com/SeloSlav/spacetimedb-openauthjs">GitHub</a>
 </body>

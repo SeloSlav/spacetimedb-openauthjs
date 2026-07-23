@@ -17,6 +17,10 @@ dist
 dist-ssr
 *.local
 
+# Generated build and smoke-test artifacts
+.tmp/
+server/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

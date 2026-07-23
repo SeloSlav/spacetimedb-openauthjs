@@ -1,10 +1,10 @@
 # SpacetimeDB Auth Demo
 
-A minimal SpacetimeDB app with OpenAuth: login, choose username, welcome screen, and logout.
+A minimal SpacetimeDB app with self-hosted OIDC: login, choose username, welcome screen, and logout.
 
 - **Frontend:** React, TypeScript, Vite
 - **Backend:** SpacetimeDB (Rust/WASM)
-- **Auth:** OpenAuth (auth server in `auth/`)
+- **Auth:** OIDC/PKCE auth server in `auth/`
 
 ## Prerequisites
 
@@ -68,7 +68,7 @@ Open [http://localhost:5173](http://localhost:5173). Sign in, choose a username,
 │       └── ui/          # LoginScreen, WelcomeScreen
 ├── server/           # SpacetimeDB Rust module (User table, set_username)
 │   └── src/lib.rs
-├── auth/             # OpenAuth server
+├── auth/             # OIDC/PKCE auth server
 └── package.json
 ```
 

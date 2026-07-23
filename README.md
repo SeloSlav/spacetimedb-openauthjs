@@ -113,7 +113,7 @@ Production has no permissive fallback.
 │       └── ui/          # LoginScreen, WelcomeScreen
 ├── server/           # SpacetimeDB Rust module (User table, set_username)
 │   └── src/lib.rs
-├── auth/             # OpenAuth server
+├── auth/             # OIDC/PKCE auth server
 └── package.json
 ```
 

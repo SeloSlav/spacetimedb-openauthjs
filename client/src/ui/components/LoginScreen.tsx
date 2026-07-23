@@ -4,7 +4,7 @@
  * Displays the initial welcome/login screen.
  * Handles:
  *  - Displaying game title.
- *  - Triggering OpenAuth OIDC login flow.
+ *  - Triggering the OIDC/PKCE login flow.
  *  - Input field for username (for NEW players).
  *  - Displaying existing username for returning players.
  *  - Displaying loading states and errors.
@@ -27,13 +27,13 @@ const UI_FONT_FAMILY = "var(--stdb-font)";
 const SPACETIMEDB_REFERRAL_URL = "https://spacetimedb.com/?referral=SeloSlav";
 
 const FAQ_ITEMS = (onLicenseClick: () => void, onDisclaimerClick: () => void): FAQItem[] => [
-  { question: "What is this?", answer: "SpacetimeDB Auth Demo shows how to use OpenAuth (OIDC) with SpacetimeDB. Sign in, choose a username, and see a welcome message. It demonstrates token-based auth for real-time multiplayer apps." },
+  { question: "What is this?", answer: "SpacetimeDB Auth Demo shows how to use a self-hosted OIDC issuer with SpacetimeDB. Sign in, choose a username, and see a welcome message. It demonstrates token-based auth for real-time multiplayer apps." },
   { question: "How do I use it?", answer: "Click Sign in, enter your email and password (or create an account), choose a username, then click Enter App. You'll see a welcome message with your username and a Log out button." },
-  { question: "What's the tech stack?", answer: "This demo uses React and SpacetimeDB for real-time multiplayer. The auth server runs on Hono with OpenAuth for OIDC. Everything runs in the browser; user data is synced via SpacetimeDB's server module." },
+  { question: "What's the tech stack?", answer: "This demo uses React and SpacetimeDB for real-time multiplayer. The OIDC auth server runs on Hono. Everything runs in the browser; user data is synced via SpacetimeDB's server module." },
   { question: "What is Hono?", answer: "Hono is a fast, lightweight web framework for TypeScript/JavaScript. We use it to power the auth server: it handles the OIDC endpoints (/authorize, /token, /revoke), JWKS, password login UI, and static assets. It's minimal, type-safe, and works great with Bun, Node, or edge runtimes." },
   { question: "How does token refresh work?", answer: "The app uses a short-lived 15-minute identity token. A rotating refresh credential is kept in an HttpOnly cookie, expires after 7 idle days, and has a 30-day maximum lifetime. Reuse detection revokes the whole token family, and logout or password reset revokes the session." },
   { question: "Can I extend this?", answer: "Absolutely! Add more tables and reducers in the SpacetimeDB server. The auth flow (login, token, set_username) is the foundation. Build your own multiplayer app on top." },
-  { question: "Why OpenAuth?", answer: "OpenAuth is a self-hosted OIDC provider. You control user data and can customize the login flow. It works seamlessly with SpacetimeDB's token-based auth." },
+  { question: "Why self-host OIDC?", answer: "You control user data and can customize the login flow while using standard authorization-code and PKCE mechanics. It works with SpacetimeDB's token-based auth." },
   { question: "Will my data persist?", answer: "Usernames are stored in SpacetimeDB. Development auth data uses a protected local JSON file; production requires PostgreSQL, HTTPS issuer configuration, email delivery, and supplied JWT keys." },
   {
     question: "What license is this under?",
@@ -343,7 +343,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   onlinePlayerCount,
   maxPlayerCount,
 }) => {
-  // Get OpenAuth state and functions
+  // Get OIDC auth state and functions
   const {
     userProfile, // Contains { userId } after successful login 
     isAuthenticated,
@@ -484,14 +484,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     return true;
   };
 
-  // Handle button click: Trigger OpenAuth login or join game
+  // Handle button click: Trigger OIDC login or join game
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setLocalError(null); // Clear previous local errors
 
     if (!isAuthenticated) {
-      // If not authenticated, start the OpenAuth login flow
+      // If not authenticated, start the OIDC login flow
       await loginRedirect();
     } else {
       // If authenticated, check if it's a new or existing player

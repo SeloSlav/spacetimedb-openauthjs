@@ -22,6 +22,7 @@ RUN npm ci
 
 COPY auth ./
 RUN npm run build
+RUN npm prune --omit=dev
 
 # --- Stage 3: Production image ---
 FROM node:20-alpine

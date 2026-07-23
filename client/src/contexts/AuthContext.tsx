@@ -17,8 +17,8 @@ const AUTH_ISSUER = AUTH_SERVER_URL;
 
 const OIDC_CLIENT_ID = import.meta.env.VITE_AUTH_CLIENT_ID ?? 'vibe-survival-game-client';
 const REDIRECT_URI = window.location.origin + '/callback';
-const REFRESH_THRESHOLD_SECONDS = 30 * 60; // Refresh when < 30 min left
-const VALIDITY_CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
+const REFRESH_THRESHOLD_SECONDS = 2 * 60; // Refresh shortly before the 15-minute token expires
+const VALIDITY_CHECK_INTERVAL_MS = 60 * 1000;
 const LOCAL_STORAGE_KEYS = {
     ID_TOKEN: 'oidc_id_token',
     ACCESS_TOKEN: 'oidc_access_token',
