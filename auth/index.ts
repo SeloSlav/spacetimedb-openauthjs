@@ -2,6 +2,12 @@
  * Hono OIDC issuer with password UI, PKCE, database storage, and managed JWT keys.
  */
 import dotenv from 'dotenv';
+import {
+  canAuthenticate,
+  emailFeaturesEnabled,
+  requiresEmailProvider,
+  resolveEmailMode,
+} from './email-mode.js';
 
 // Load environment variables from .env file in development
 if (process.env.NODE_ENV !== 'production') {
@@ -9,21 +15,33 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Environment-based configuration
+const isDevelopment = process.env.NODE_ENV !== 'production';
 const config = {
-  isDevelopment: process.env.NODE_ENV !== 'production',
+  isDevelopment,
   port: parseInt(process.env.PORT || '4001'),
   issuerUrl: (process.env.ISSUER_URL || 'http://localhost:4001').replace(/\/+$/, ''),
   databaseUrl: process.env.DATABASE_URL,
   jwtPrivateKey: process.env.JWT_PRIVATE_KEY,
   jwtPublicKey: process.env.JWT_PUBLIC_KEY,
   clientId: process.env.AUTH_CLIENT_ID || 'vibe-survival-game-client',
+  emailMode: resolveEmailMode(process.env.AUTH_EMAIL_MODE, isDevelopment),
   trustProxy: process.env.TRUST_PROXY === 'true',
   allowedOrigins: process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
     : ['http://localhost:5173', 'http://localhost:5176'],
 };
 
-function validateProductionConfig(): void {
+function validateConfig(): void {
+  if (requiresEmailProvider(config.emailMode)) {
+    const missingEmailConfig = [
+      !process.env.RESEND_API_KEY && 'RESEND_API_KEY',
+      !process.env.RESEND_FROM && 'RESEND_FROM',
+    ].filter(Boolean);
+    if (missingEmailConfig.length > 0) {
+      throw new Error(`AUTH_EMAIL_MODE=resend requires: ${missingEmailConfig.join(', ')}`);
+    }
+  }
+
   if (config.isDevelopment) return;
 
   const missing = [
@@ -32,8 +50,6 @@ function validateProductionConfig(): void {
     !config.jwtPrivateKey && 'JWT_PRIVATE_KEY',
     !config.jwtPublicKey && 'JWT_PUBLIC_KEY',
     !process.env.ALLOWED_ORIGINS && 'ALLOWED_ORIGINS',
-    !process.env.RESEND_API_KEY && 'RESEND_API_KEY',
-    !process.env.RESEND_FROM && 'RESEND_FROM',
   ].filter(Boolean);
   if (missing.length > 0) {
     throw new Error(`Missing required production configuration: ${missing.join(', ')}`);
@@ -56,12 +72,13 @@ function validateProductionConfig(): void {
   }
 }
 
-validateProductionConfig();
+validateConfig();
 
 console.log(`[Config] Environment: ${config.isDevelopment ? 'development' : 'production'}`);
 console.log(`[Config] Port: ${config.port}`);
 console.log(`[Config] Issuer URL: ${config.issuerUrl}`);
 console.log(`[Config] Database: ${config.databaseUrl ? 'PostgreSQL' : 'protected development JSON'}`);
+console.log(`[Config] Email mode: ${config.emailMode}`);
 
 import { Hono, type Context } from 'hono';
 import { serve } from '@hono/node-server';
@@ -164,13 +181,19 @@ function isValidAuthorizationRequest(
 
 // Initialize Resend for email sending
 const resendApiKey = process.env.RESEND_API_KEY;
-const resend = resendApiKey ? new Resend(resendApiKey) : null;
+const resend = config.emailMode === 'resend' ? new Resend(resendApiKey!) : null;
 const resendFrom = process.env.RESEND_FROM || 'SpacetimeDB Auth Demo <noreply@example.com>';
 
-if (!resendApiKey) {
-  console.warn('[Config] RESEND_API_KEY not set - development email links will be logged to console');
-} else {
-  console.log('[Config] Resend email service configured');
+switch (config.emailMode) {
+  case 'resend':
+    console.log('[Config] Resend email service configured');
+    break;
+  case 'console':
+    console.warn('[Config] Development email links will be logged to the console');
+    break;
+  case 'disabled':
+    console.warn('[Config] Email ownership verification and password recovery are disabled');
+    break;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -204,7 +227,7 @@ async function _handlePasswordLoginSimple(email: string, password?: string): Pro
   if (!normalizedEmail || !password || !isPasswordInputWithinLimit(password)) return null;
   const user = await db.getUserByEmail(normalizedEmail);
   const verification = await verifyPassword(password, user?.passwordHash ?? dummyPasswordHash);
-  if (!user || !verification.valid || !user.emailVerified) return null;
+  if (!user || !verification.valid || !canAuthenticate(config.emailMode, user.emailVerified)) return null;
 
   if (verification.needsRehash) {
     await db.updateUserPassword(user.userId, await hashPassword(password));
@@ -284,17 +307,19 @@ function readRefreshToken(c: Context, formToken: FormDataEntryValue | null): str
 }
 
 async function issueEmailVerification(user: { id: string; email: string }, returnTo: string): Promise<void> {
+  if (!emailFeaturesEnabled(config.emailMode)) return;
+
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_HOURS * 60 * 60 * 1000);
   await db.storeEmailVerificationToken(token, user.id, expiresAt);
 
   const verificationLink = `${ISSUER_URL}/auth/password/verify-email?token=${token}&return_to=${encodeURIComponent(returnTo)}`;
-  if (!resend) {
+  if (config.emailMode === 'console') {
     console.log(`[EmailVerification] DEV MODE - verification link: ${verificationLink}`);
     return;
   }
 
-  await resend.emails.send({
+  await resend!.emails.send({
     from: resendFrom,
     to: user.email,
     subject: 'Verify your SpacetimeDB Auth Demo email',
@@ -323,6 +348,7 @@ function issueSignedTokens(user: UserRecord, clientId: string) {
     iat: issuedAt,
     email: user.email,
     email_verified: user.emailVerified,
+    account_active: canAuthenticate(config.emailMode, user.emailVerified),
   };
   const signOptions: jwt.SignOptions = {
     algorithm: 'RS256',
@@ -417,6 +443,15 @@ function sanitizeReturnTo(raw?: string): string {
   } catch {
     return defaultPath;
   }
+}
+
+function renderEmailHelpLinks(loginReturnTo: string): string {
+  if (!emailFeaturesEnabled(config.emailMode)) return '';
+  const encodedReturnTo = encodeURIComponent(loginReturnTo);
+  return `
+    <p class="form-link" style="margin-top: -15px; margin-bottom: 0;"><a href="/auth/password/forgot?return_to=${encodedReturnTo}">Forgot Password?</a></p>
+    <p class="form-link"><a href="/auth/password/resend-verification?return_to=${encodedReturnTo}">Resend verification email</a></p>
+  `;
 }
 
 function clientAppUrlFromReturnTo(returnTo?: string): string {
@@ -761,7 +796,7 @@ function renderStatusPage(opts: {
           id_token_signing_alg_values_supported: ["RS256"],
           grant_types_supported: ["authorization_code", "refresh_token"],
           code_challenge_methods_supported: ["S256"],
-          claims_supported: ["iss", "sub", "aud", "iat", "exp", "email", "email_verified"],
+          claims_supported: ["iss", "sub", "aud", "iat", "exp", "email", "email_verified", "account_active"],
       });
   });
 
@@ -899,8 +934,10 @@ function renderStatusPage(opts: {
     }
     if (!consumeRateLimit(c, 'register-account', privacyKey(email), 3, 60 * 60 * 1000)) {
       return c.html(renderStatusPage({
-        title: 'Check Your Inbox',
-        message: 'If this address can be registered, verification instructions will arrive shortly.',
+        title: emailFeaturesEnabled(config.emailMode) ? 'Check Your Inbox' : 'Registration Processed',
+        message: emailFeaturesEnabled(config.emailMode)
+          ? 'If this address can be registered, verification instructions will arrive shortly.'
+          : 'If this address was available, the account is ready to sign in.',
       }));
     }
 
@@ -912,9 +949,13 @@ function renderStatusPage(opts: {
     const loginReturnTo = `/auth/password/login?redirect_uri=${encodeURIComponent(redirect_uri_from_form)}&state=${encodeURIComponent(state ?? '')}&code_challenge=${encodeURIComponent(code_challenge)}&code_challenge_method=${encodeURIComponent(code_challenge_method)}&client_id=${encodeURIComponent(client_id)}`;
     const userResult = await _handlePasswordRegisterSimple(email, password);
 
-    if (userResult) {
+    if (emailFeaturesEnabled(config.emailMode) && userResult) {
       void issueEmailVerification(userResult, loginReturnTo)
         .catch((error) => console.error('[EmailVerification] Failed to send verification email:', error));
+    }
+
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.redirect(loginReturnTo, 303);
     }
 
     // The response deliberately does not reveal whether the address already exists.
@@ -970,8 +1011,7 @@ function renderStatusPage(opts: {
                 
                 <button type="submit" class="submit-button">Sign In</button>
                 
-                <p class="form-link" style="margin-top: -15px; margin-bottom: 0;"><a href="/auth/password/forgot?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Forgot Password?</a></p>
-                <p class="form-link"><a href="/auth/password/resend-verification?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Resend verification email</a></p>
+                ${renderEmailHelpLinks(`/auth/password/login?${queryString}`)}
             </form>
             
             <div class="divider"></div>
@@ -1075,8 +1115,7 @@ function renderStatusPage(opts: {
                         </div>
                         <button type="submit" class="submit-button">Sign In</button>
                         
-                        <p class="form-link" style="margin-top: -15px; margin-bottom: 0;"><a href="/auth/password/forgot?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Forgot Password?</a></p>
-                        <p class="form-link"><a href="/auth/password/resend-verification?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Resend verification email</a></p>
+                        ${renderEmailHelpLinks(`/auth/password/login?${queryString}`)}
                     </form>
                     <div class="divider"></div>
                     <p class="form-link">Don't have an account? <a href="/auth/password/register?${queryString}">Create Account</a></p>
@@ -1089,6 +1128,13 @@ function renderStatusPage(opts: {
 
   app.get('/auth/password/verify-email', async (c) => {
     const returnTo = sanitizeReturnTo(c.req.query('return_to'));
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.html(renderStatusPage({
+        title: 'Email Verification Disabled',
+        message: 'This server does not require email ownership verification.',
+        returnTo,
+      }), 404);
+    }
     if (!consumeRateLimit(c, 'verify-email-ip', clientRateLimitKey(c), 30, 15 * 60 * 1000)) {
       return c.html(renderStatusPage({
         title: 'Please Slow Down',
@@ -1127,10 +1173,23 @@ function renderStatusPage(opts: {
 
   app.get('/auth/password/resend-verification', (c) => {
     const returnTo = sanitizeReturnTo(c.req.query('return_to'));
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.html(renderStatusPage({
+        title: 'Email Verification Disabled',
+        message: 'This server does not require email ownership verification.',
+        returnTo,
+      }), 404);
+    }
     return c.html(renderVerificationRequestPage({ returnTo }));
   });
 
   app.post('/auth/password/resend-verification', async (c) => {
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.html(renderStatusPage({
+        title: 'Email Verification Disabled',
+        message: 'This server does not require email ownership verification.',
+      }), 404);
+    }
     const originError = rejectUntrustedBrowserOrigin(c, true);
     if (originError) return originError;
     const form = await c.req.formData();
@@ -1158,10 +1217,25 @@ function renderStatusPage(opts: {
   // --- Forgot Password Flow ---
   app.get('/auth/password/forgot', (c) => {
     const returnTo = sanitizeReturnTo(c.req.query('return_to'));
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.html(renderStatusPage({
+        title: 'Password Recovery Disabled',
+        message: 'This server has no email recovery channel. Contact the server administrator if you lose access.',
+        returnTo,
+        error: true,
+      }), 404);
+    }
     return c.html(renderForgotPasswordPage({ returnTo }));
   });
 
   app.post('/auth/password/forgot', async (c) => {
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.html(renderStatusPage({
+        title: 'Password Recovery Disabled',
+        message: 'This server has no email recovery channel. Contact the server administrator if you lose access.',
+        error: true,
+      }), 404);
+    }
     const originError = rejectUntrustedBrowserOrigin(c, true);
     if (originError) return originError;
     const form = await c.req.formData();
@@ -1187,11 +1261,11 @@ function renderStatusPage(opts: {
           await db.storePasswordResetToken(token, user.userId, email, expiresAt);
           const resetLink = `${ISSUER_URL}/auth/password/reset?token=${token}&return_to=${encodeURIComponent(returnTo)}`;
 
-          if (!resend) {
+          if (config.emailMode === 'console') {
             console.log(`[ForgotPassword] DEV MODE - reset link: ${resetLink}`);
             return;
           }
-          await resend.emails.send({
+          await resend!.emails.send({
             from: resendFrom,
             to: email,
             subject: 'Reset your SpacetimeDB Auth Demo password',
@@ -1220,6 +1294,15 @@ function renderStatusPage(opts: {
     const token = c.req.query('token');
     const returnTo = sanitizeReturnTo(c.req.query('return_to'));
 
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.html(renderStatusPage({
+        title: 'Password Recovery Disabled',
+        message: 'This server has no email recovery channel. Contact the server administrator if you lose access.',
+        returnTo,
+        error: true,
+      }), 404);
+    }
+
     if (
       !consumeRateLimit(c, 'reset-view-ip', clientRateLimitKey(c), 40, 15 * 60 * 1000)
       || !token
@@ -1237,6 +1320,13 @@ function renderStatusPage(opts: {
   });
 
   app.post('/auth/password/reset', async (c) => {
+    if (!emailFeaturesEnabled(config.emailMode)) {
+      return c.html(renderStatusPage({
+        title: 'Password Recovery Disabled',
+        message: 'This server has no email recovery channel. Contact the server administrator if you lose access.',
+        error: true,
+      }), 404);
+    }
     const originError = rejectUntrustedBrowserOrigin(c, true);
     if (originError) return originError;
     if (!consumeRateLimit(c, 'reset-submit-ip', clientRateLimitKey(c), 20, 15 * 60 * 1000)) {
@@ -1291,8 +1381,8 @@ function renderStatusPage(opts: {
 
     clearRefreshTokenCookie(c);
     console.log(`[ResetPassword] Password reset and all refresh sessions revoked for user: ${result.userId}`);
-    if (resend) {
-      void resend.emails.send({
+    if (config.emailMode === 'resend') {
+      void resend!.emails.send({
         from: resendFrom,
         to: result.email,
         subject: 'Your SpacetimeDB Auth Demo password was changed',
@@ -1343,7 +1433,7 @@ function renderStatusPage(opts: {
       }
 
       const user = await db.getUserById(rotation.record.userId);
-      if (!user?.emailVerified) {
+      if (!user || !canAuthenticate(config.emailMode, user.emailVerified)) {
         await db.revokeRefreshTokensForUser(rotation.record.userId);
         clearRefreshTokenCookie(c);
         return c.json({ error: 'invalid_grant' }, 400);
@@ -1400,7 +1490,9 @@ function renderStatusPage(opts: {
 
     const userId = codeData.userId;
     const user = await db.getUserById(userId);
-    if (!user?.emailVerified) return c.json({ error: 'invalid_grant' }, 400);
+    if (!user || !canAuthenticate(config.emailMode, user.emailVerified)) {
+      return c.json({ error: 'invalid_grant' }, 400);
+    }
 
     const tokens = issueSignedTokens(user, clientIdForm);
     const refreshToken = crypto.randomBytes(48).toString('base64url');

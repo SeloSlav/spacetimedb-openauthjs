@@ -12,6 +12,7 @@ export interface JwtPayload {
   userId?: string;
   email?: string;
   email_verified?: boolean;
+  account_active?: boolean;
   token_use?: string;
   [claim: string]: unknown;
 }

@@ -37,11 +37,11 @@ fn require_application_jwt(ctx: &ReducerContext) -> Result<Timestamp, String> {
         return Err("Invalid authentication token type".to_string());
     }
     if claims
-        .get("email_verified")
+        .get("account_active")
         .and_then(serde_json::Value::as_bool)
         != Some(true)
     {
-        return Err("Verified email required".to_string());
+        return Err("Active account required".to_string());
     }
     let expires_at_seconds = claims
         .get("exp")

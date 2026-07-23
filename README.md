@@ -1,8 +1,8 @@
 # SpacetimeDB Auth Demo
 
-A SpacetimeDB app with a hardened OIDC password flow: verified-email registration,
-PKCE login, short-lived identity tokens, rotating refresh sessions, account recovery,
-username selection, and logout.
+A SpacetimeDB app with a hardened OIDC password flow: configurable email verification,
+PKCE login, short-lived identity tokens, rotating refresh sessions, optional account
+recovery, username selection, and logout.
 
 - **Frontend:** React, TypeScript, Vite
 - **Backend:** SpacetimeDB (Rust/WASM)
@@ -68,11 +68,12 @@ Open [http://localhost:5173](http://localhost:5173). Sign in, choose a username,
 - `PORT` - Auth server port (default: `4001`)
 - `ISSUER_URL` - Public base URL for OIDC issuer (required in production)
 - `AUTH_CLIENT_ID` - OIDC audience/client ID; use the same value for the client and module build
+- `AUTH_EMAIL_MODE` - `disabled`, `console`, or `resend` (details below)
 - `JWT_PRIVATE_KEY` - Required in production
 - `JWT_PUBLIC_KEY` - Required in production and validated against the private key
 - `DATABASE_URL` - Required in production; development uses a protected JSON file
-- `RESEND_API_KEY` - Required in production for verification and recovery mail
-- `RESEND_FROM` - Required production sender identity
+- `RESEND_API_KEY` - Required when `AUTH_EMAIL_MODE=resend`
+- `RESEND_FROM` - Required sender identity when `AUTH_EMAIL_MODE=resend`
 - `ALLOWED_ORIGINS` - Required production HTTPS CORS origins (see below)
 - `ALLOWED_REDIRECT_URIS` - Optional exact callback URI allowlist
 - `TRUST_PROXY` - Set to `true` only behind a trusted proxy that overwrites forwarding headers
@@ -81,6 +82,22 @@ Notes:
 - Generate JWT keys with `cd auth && npm run keys`.
 - Production startup fails closed when required security configuration is absent.
 - New passwords use scrypt. Existing bcrypt passwords are migrated after a successful login.
+
+### Email modes
+
+Choose one delivery and account-verification mode:
+
+| Mode | Registration and login | Password recovery | Production |
+| --- | --- | --- | --- |
+| `disabled` | Immediate; the email is an unverified login identifier | Disabled | Allowed |
+| `console` | Verification link is printed to the auth-server console | Reset link is printed to the console | Development only |
+| `resend` | Verification link is delivered through Resend | Reset link is delivered through Resend | Allowed |
+
+Development defaults to `console`; production defaults to `resend`. Set
+`AUTH_EMAIL_MODE=disabled` explicitly for a no-email deployment. In that mode,
+applications must not interpret the `email` claim as proof that the user owns the
+address: `email_verified` remains `false`. Users who lose their passwords need an
+administrator-assisted reset, account recreation, or another recovery mechanism.
 
 ### CORS Whitelist
 
@@ -100,8 +117,10 @@ Production has no permissive fallback.
 - The refresh credential is stored only in a `HttpOnly`, `SameSite=Strict` cookie.
 - Refresh credentials rotate on every use, are hashed in storage, detect reuse,
   expire after 7 idle days, and have a 30-day absolute lifetime.
-- Password reset consumes its token atomically and revokes every refresh session.
-- Registration requires email verification before an authorization code can be issued.
+- When enabled, password reset consumes its token atomically and revokes every refresh session.
+- Email-enabled registration requires verification before an authorization code can be issued.
+- No-email accounts receive `account_active=true` but retain the truthful
+  `email_verified=false` claim.
 
 ## Project Structure
 
@@ -123,7 +142,8 @@ Production has no permissive fallback.
    ```bash
    npm run deploy:prod
    ```
-2. **Configure auth server env** (`ISSUER_URL`, PostgreSQL, JWT keys, Resend, and HTTPS origins).
+2. **Configure auth server env** (`ISSUER_URL`, PostgreSQL, JWT keys, an email mode,
+   and HTTPS origins). Resend is needed only for `AUTH_EMAIL_MODE=resend`.
    Set the same issuer while compiling/publishing the SpacetimeDB module:
    ```powershell
    $env:AUTH_ISSUER_URL = "https://auth.example.com"

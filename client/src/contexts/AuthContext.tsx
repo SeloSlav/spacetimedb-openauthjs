@@ -364,7 +364,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
             if (
               decoded.iss !== AUTH_ISSUER
               || !audience.includes(OIDC_CLIENT_ID)
-              || decoded.email_verified !== true
+              || decoded.account_active !== true
               || decoded.token_use !== 'id'
             ) {
               console.warn("[AuthContext] Token claims do not match this application");
@@ -408,10 +408,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       if (
         decoded.iss !== AUTH_ISSUER
         || !audience.includes(OIDC_CLIENT_ID)
-        || decoded.email_verified !== true
+        || decoded.account_active !== true
         || decoded.token_use !== 'id'
       ) {
-        console.warn("[AuthContext] Token validation failed: Issuer, audience, or verification claim mismatch");
+        console.warn("[AuthContext] Token validation failed: Issuer, audience, or account status claim mismatch");
         return false;
       }
 
