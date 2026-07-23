@@ -6,9 +6,13 @@
 
 export interface JwtPayload {
   exp?: number;
+  iss?: string;
+  aud?: string | string[];
   sub?: string;
   userId?: string;
   email?: string;
+  email_verified?: boolean;
+  token_use?: string;
   [claim: string]: unknown;
 }
 

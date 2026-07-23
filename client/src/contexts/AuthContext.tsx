@@ -9,8 +9,11 @@ import { disconnect } from '../network/spacetimedbClient.ts';
 // --- Environment-based Configuration ---
 const isDevelopment = import.meta.env.DEV || window.location.hostname === 'localhost';
 
-const AUTH_SERVER_URL = import.meta.env.VITE_AUTH_SERVER_URL
-  ?? (isDevelopment ? 'http://localhost:4001' : (typeof window !== 'undefined' ? window.location.origin : ''));
+const AUTH_SERVER_URL = (
+  import.meta.env.VITE_AUTH_SERVER_URL
+  ?? (isDevelopment ? 'http://localhost:4001' : (typeof window !== 'undefined' ? window.location.origin : ''))
+).replace(/\/+$/, '');
+const AUTH_ISSUER = AUTH_SERVER_URL;
 
 const OIDC_CLIENT_ID = import.meta.env.VITE_AUTH_CLIENT_ID ?? 'vibe-survival-game-client';
 const REDIRECT_URI = window.location.origin + '/callback';
@@ -19,7 +22,6 @@ const VALIDITY_CHECK_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 const LOCAL_STORAGE_KEYS = {
     ID_TOKEN: 'oidc_id_token',
     ACCESS_TOKEN: 'oidc_access_token',
-    REFRESH_TOKEN: 'oidc_refresh_token',
     PKCE_VERIFIER: 'pkce_verifier',
     OIDC_STATE: 'oidc_state',
 };
@@ -99,7 +101,7 @@ function generateRandomString(length: number): string {
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [spacetimeToken, setSpacetimeToken] = useState<string | null>(() => {
-      const storedToken = localStorage.getItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
+      const storedToken = sessionStorage.getItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
       // console.log(`[AuthContext LOG] Initializing token state. Found in storage: ${!!storedToken}`); // <-- LOG initialization
       return storedToken;
   });
@@ -122,7 +124,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         // 1. Generate PKCE Verifier and Challenge
         const verifier = generateRandomString(128); // Generate a random verifier
         const pkce = await generatePkceChallenge(verifier);
-        localStorage.setItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER, pkce.code_verifier);
+        sessionStorage.setItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER, pkce.code_verifier);
 
         // 2. Generate State (for CSRF protection; validate on callback)
         const state = generateRandomString(32);
@@ -161,7 +163,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
     if ((code || error) && (!returnedState || !expectedState || returnedState !== expectedState)) {
         sessionStorage.removeItem(LOCAL_STORAGE_KEYS.OIDC_STATE);
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
+        sessionStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
         setAuthError("Authentication response could not be verified. Please sign in again.");
         setIsLoading(false);
         navigateToRoot();
@@ -181,7 +183,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
              setAuthError(`Authentication failed: ${error} ${errorDesc ? `(${errorDesc})` : ''}`);
         } else {
             // No code: direct navigation to /callback, refresh, or cancelled login
-            const existingToken = localStorage.getItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
+            const existingToken = sessionStorage.getItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
             if (existingToken) {
                  setSpacetimeToken(existingToken);
                  const profile = parseToken(existingToken);
@@ -195,7 +197,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         return;
     }
 
-    const verifier = localStorage.getItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
+    const verifier = sessionStorage.getItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
     if (!verifier) {
         setAuthError("Session expired. Please sign in again.");
         setIsLoading(false);
@@ -217,6 +219,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         // Make the POST request to the token endpoint
         const tokenResponse = await fetch(`${AUTH_SERVER_URL}/token`, {
             method: 'POST',
+            credentials: 'include',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
             },
@@ -234,7 +237,6 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         // Extract tokens directly from the JSON response
         const id_token = tokens.id_token as string | undefined;
         const access_token = tokens.access_token as string | undefined;
-        const refresh_token = tokens.refresh_token as string | undefined;
 
         // console.log("[AuthContext LOG] Tokens received (id_token present?):", !!id_token);
 
@@ -243,9 +245,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         }
 
         // Store tokens
-        localStorage.setItem(LOCAL_STORAGE_KEYS.ID_TOKEN, id_token);
-        if (access_token) localStorage.setItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN, access_token);
-        if (refresh_token) localStorage.setItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN, refresh_token);
+        sessionStorage.setItem(LOCAL_STORAGE_KEYS.ID_TOKEN, id_token);
+        if (access_token) sessionStorage.setItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN, access_token);
 
         // Set state (This will trigger the useEffect below)
         // console.log("[AuthContext LOG] Setting spacetimeToken state AFTER successful callback.");
@@ -253,7 +254,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         const profile = parseToken(id_token);
         setUserProfile(profile);
         setAuthError(null);
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER); // Only remove after success
+        sessionStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER); // Only remove after success
 
         navigateToRoot();
 
@@ -281,20 +282,17 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     } catch {
       // Ignore; we're logging out anyway
     }
-    const refreshToken = localStorage.getItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
-    if (refreshToken) {
-      try {
-        const body = new URLSearchParams();
-        body.append('token', refreshToken);
-        body.append('token_type_hint', 'refresh_token');
-        await fetch(`${AUTH_SERVER_URL}/revoke`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        });
-      } catch {
-        // Ignore revoke errors; we clear local state anyway
-      }
+    try {
+      const body = new URLSearchParams();
+      body.append('token_type_hint', 'refresh_token');
+      await fetch(`${AUTH_SERVER_URL}/revoke`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+    } catch {
+      // Ignore revoke errors; we clear local state anyway
     }
     clearTokens();
     setSpacetimeToken(null);
@@ -307,27 +305,23 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   // --- Helper Functions ---
   const clearTokens = () => {
-    localStorage.removeItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
-    localStorage.removeItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN);
-    localStorage.removeItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
-    localStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
+    sessionStorage.removeItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
+    sessionStorage.removeItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN);
+    sessionStorage.removeItem(LOCAL_STORAGE_KEYS.PKCE_VERIFIER);
     sessionStorage.removeItem(LOCAL_STORAGE_KEYS.OIDC_STATE);
     setSpacetimeToken(null);
     setUserProfile(null);
   };
 
   const refreshTokens = useCallback(async (): Promise<boolean> => {
-    const refreshToken = localStorage.getItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN);
-    if (!refreshToken) return false;
-
     try {
       const body = new URLSearchParams();
       body.append('grant_type', 'refresh_token');
-      body.append('refresh_token', refreshToken);
       body.append('client_id', OIDC_CLIENT_ID);
 
       const res = await fetch(`${AUTH_SERVER_URL}/token`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
       });
@@ -340,13 +334,11 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       const id_token = data.id_token as string | undefined;
       const access_token = data.access_token as string | undefined;
-      const new_refresh_token = data.refresh_token as string | undefined;
 
       if (!id_token) return false;
 
-      localStorage.setItem(LOCAL_STORAGE_KEYS.ID_TOKEN, id_token);
-      if (access_token) localStorage.setItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN, access_token);
-      if (new_refresh_token) localStorage.setItem(LOCAL_STORAGE_KEYS.REFRESH_TOKEN, new_refresh_token);
+      sessionStorage.setItem(LOCAL_STORAGE_KEYS.ID_TOKEN, id_token);
+      if (access_token) sessionStorage.setItem(LOCAL_STORAGE_KEYS.ACCESS_TOKEN, access_token);
 
       setSpacetimeToken(id_token);
       const profile = parseToken(id_token);
@@ -356,7 +348,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       console.warn('[AuthContext] Token refresh error:', err);
       return false;
     }
-  }, []);
+    }, []);
 
   const parseToken = (token: string): UserProfile | null => {
        try {
@@ -364,9 +356,19 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
             // Check if token is expired
             const now = Math.floor(Date.now() / 1000);
-            if (decoded.exp && decoded.exp < now) {
+            if (!decoded.exp || decoded.exp <= now) {
                 console.warn("[AuthContext] Token is expired");
                 return null;
+            }
+            const audience = Array.isArray(decoded.aud) ? decoded.aud : [decoded.aud];
+            if (
+              decoded.iss !== AUTH_ISSUER
+              || !audience.includes(OIDC_CLIENT_ID)
+              || decoded.email_verified !== true
+              || decoded.token_use !== 'id'
+            ) {
+              console.warn("[AuthContext] Token claims do not match this application");
+              return null;
             }
 
             const userId = decoded.sub || decoded.userId;
@@ -398,8 +400,18 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       const now = Math.floor(Date.now() / 1000);
 
       // Check expiration
-      if (decoded.exp && decoded.exp < now) {
+      if (!decoded.exp || decoded.exp <= now) {
         console.warn("[AuthContext] Token validation failed: Token is expired");
+        return false;
+      }
+      const audience = Array.isArray(decoded.aud) ? decoded.aud : [decoded.aud];
+      if (
+        decoded.iss !== AUTH_ISSUER
+        || !audience.includes(OIDC_CLIENT_ID)
+        || decoded.email_verified !== true
+        || decoded.token_use !== 'id'
+      ) {
+        console.warn("[AuthContext] Token validation failed: Issuer, audience, or verification claim mismatch");
         return false;
       }
 
@@ -418,13 +430,19 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   const invalidateCurrentToken = useCallback(() => {
     console.warn("[AuthContext LOG] Current token is being invalidated, likely due to rejection by a service (e.g., SpacetimeDB).");
-    const tokenExistedPriorToInvalidation = !!localStorage.getItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
+    const tokenExistedPriorToInvalidation = !!sessionStorage.getItem(LOCAL_STORAGE_KEYS.ID_TOKEN);
 
     try {
       disconnect();
     } catch {
       // Ignore
     }
+    void fetch(`${AUTH_SERVER_URL}/revoke`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'token_type_hint=refresh_token',
+    }).catch(() => undefined);
     clearTokens();
 
     if (tokenExistedPriorToInvalidation) {
@@ -439,25 +457,30 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
   // --- Effect for Initial Load / Handling Redirect ---
   useEffect(() => {
+    // Remove credentials written by older builds. Refresh credentials are now
+    // server-managed HttpOnly cookies and short-lived tokens are tab-scoped.
+    localStorage.removeItem('oidc_id_token');
+    localStorage.removeItem('oidc_access_token');
+    localStorage.removeItem('oidc_refresh_token');
+    localStorage.removeItem('pkce_verifier');
+
     if (window.location.pathname === new URL(REDIRECT_URI).pathname) {
       handleRedirectCallback();
       return;
     }
 
-    if (!spacetimeToken) {
-      setIsLoading(false);
-      return;
-    }
-
-    const profile = parseToken(spacetimeToken);
-    if (profile) {
-      setUserProfile(profile);
-      setIsLoading(false);
-      return;
-    }
-
-    // Token invalid (expired or malformed): try refresh before clearing
     (async () => {
+      if (spacetimeToken) {
+        const profile = parseToken(spacetimeToken);
+        if (profile) {
+          setUserProfile(profile);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // The refresh token is an HttpOnly cookie, so a new tab can restore its
+      // short-lived ID token without exposing the refresh credential to JS.
       const refreshed = await refreshTokens();
       if (!refreshed) {
         clearTokens();

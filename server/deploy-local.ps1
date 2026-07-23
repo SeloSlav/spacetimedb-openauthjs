@@ -13,6 +13,8 @@ $env:CARGO_TARGET_DIR = "C:\RustBuild\spacetimedb-auth-demo-target"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $modulePath = $scriptDir
 $outDir = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\client\src\generated"))
+$env:AUTH_ISSUER_URL = if ($env:AUTH_ISSUER_URL) { $env:AUTH_ISSUER_URL.TrimEnd("/") } else { "http://localhost:4001" }
+$env:AUTH_CLIENT_ID = if ($env:AUTH_CLIENT_ID) { $env:AUTH_CLIENT_ID } else { "vibe-survival-game-client" }
 
 function Assert-LastExit([string]$stepName) {
   if ($LASTEXITCODE -ne 0) {
@@ -28,7 +30,7 @@ spacetime publish --no-config -p . spacetimedb-auth-demo-local -y
 Assert-LastExit "Publish to local database"
 
 Write-Host "[GEN] Regenerating client bindings..." -ForegroundColor Yellow
-spacetime generate --no-config --include-private -p . -l typescript -o "$outDir" -y
+spacetime generate --no-config -p . -l typescript -o "$outDir" -y
 Assert-LastExit "Generate TypeScript bindings"
 
 Write-Host "[SUCCESS] Local deployment complete! Database: spacetimedb-auth-demo-local" -ForegroundColor Green

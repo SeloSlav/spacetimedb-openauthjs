@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /**
  * SpacetimeDB connection and User table state.
- * Connects when auth token is available; subscribes to User table.
+ * Connects when auth token is available; subscribes to the authenticated user view.
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
@@ -104,7 +104,7 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
 
     type UserRow = { identity: { toHexString: () => string }; username?: string | null; bio?: string | null; online?: boolean };
     function lookupMyProfile(c: DbConnection, id: import("spacetimedb").Identity): { username: string | null; bio: string | null } | null {
-      const userTable = (c.db as unknown as { user?: { iter: () => Iterable<UserRow> } }).user;
+      const userTable = (c.db as unknown as { authenticatedUserDirectory?: { iter: () => Iterable<UserRow> } }).authenticatedUserDirectory;
       if (!userTable) return null;
       for (const row of userTable.iter()) {
         if (row.identity.toHexString() === id.toHexString()) {
@@ -114,7 +114,7 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
       return null;
     }
     function refreshOnlineUsers(c: DbConnection) {
-      const userTable = (c.db as unknown as { user?: { iter: () => Iterable<UserRow> } }).user;
+      const userTable = (c.db as unknown as { authenticatedUserDirectory?: { iter: () => Iterable<UserRow> } }).authenticatedUserDirectory;
       if (!userTable) return;
       const users: OnlineUser[] = [];
       for (const row of userTable.iter()) {
@@ -241,9 +241,9 @@ export function SpacetimeDBProvider({ children, authToken }: SpacetimeDBProvider
             resolveUsernameFromDb(conn);
             refreshOnlineUsers(conn);
           })
-          .subscribe("SELECT * FROM user");
+          .subscribe("SELECT * FROM authenticated_user_directory");
 
-        const userTable = (conn.db as unknown as { user?: { onInsert: (cb: (ctx: unknown, row: UserRow) => void) => void; onUpdate: (cb: (ctx: unknown, old: unknown, row: UserRow) => void) => void; onDelete: (cb: (ctx: unknown, row: { identity: { toHexString: () => string } }) => void) => void } }).user;
+        const userTable = (conn.db as unknown as { authenticatedUserDirectory?: { onInsert: (cb: (ctx: unknown, row: UserRow) => void) => void; onUpdate: (cb: (ctx: unknown, old: unknown, row: UserRow) => void) => void; onDelete: (cb: (ctx: unknown, row: { identity: { toHexString: () => string } }) => void) => void } }).authenticatedUserDirectory;
         if (userTable) {
           userTable.onInsert((_ctx, row) => {
             if (cancelled) return;

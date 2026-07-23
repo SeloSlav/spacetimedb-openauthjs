@@ -31,10 +31,10 @@ const FAQ_ITEMS = (onLicenseClick: () => void, onDisclaimerClick: () => void): F
   { question: "How do I use it?", answer: "Click Sign in, enter your email and password (or create an account), choose a username, then click Enter App. You'll see a welcome message with your username and a Log out button." },
   { question: "What's the tech stack?", answer: "This demo uses React and SpacetimeDB for real-time multiplayer. The auth server runs on Hono with OpenAuth for OIDC. Everything runs in the browser; user data is synced via SpacetimeDB's server module." },
   { question: "What is Hono?", answer: "Hono is a fast, lightweight web framework for TypeScript/JavaScript. We use it to power the auth server: it handles the OIDC endpoints (/authorize, /token, /revoke), JWKS, password login UI, and static assets. It's minimal, type-safe, and works great with Bun, Node, or edge runtimes." },
-  { question: "How does token refresh work?", answer: "When you sign in, you get an access token (4h) and a refresh token (7 days). The app checks every 5 minutes and refreshes tokens before they expire. If your session expires, it tries to refresh automatically. You only need to sign in again if the refresh token has expired or been revoked. Logging out revokes the refresh token on the server." },
+  { question: "How does token refresh work?", answer: "The app uses a short-lived 15-minute identity token. A rotating refresh credential is kept in an HttpOnly cookie, expires after 7 idle days, and has a 30-day maximum lifetime. Reuse detection revokes the whole token family, and logout or password reset revokes the session." },
   { question: "Can I extend this?", answer: "Absolutely! Add more tables and reducers in the SpacetimeDB server. The auth flow (login, token, set_username) is the foundation. Build your own multiplayer app on top." },
   { question: "Why OpenAuth?", answer: "OpenAuth is a self-hosted OIDC provider. You control user data and can customize the login flow. It works seamlessly with SpacetimeDB's token-based auth." },
-  { question: "Will my data persist?", answer: "Usernames are stored in SpacetimeDB. The auth server may use in-memory or PostgreSQL. For production, configure DATABASE_URL and JWT keys." },
+  { question: "Will my data persist?", answer: "Usernames are stored in SpacetimeDB. Development auth data uses a protected local JSON file; production requires PostgreSQL, HTTPS issuer configuration, email delivery, and supplied JWT keys." },
   {
     question: "What license is this under?",
     answer: (
@@ -817,6 +817,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
                       type="text"
                       placeholder="Enter username"
                       value={inputUsername}
+                      maxLength={32}
                       onChange={(e) => setInputUsername(e.target.value)}
                       onKeyDown={handleKeyDown}
                       style={{

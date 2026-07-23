@@ -1,0 +1,11 @@
+C:\WebProjects\spacetimedb-openauthjs\.tmp\rust-check-target\debug\deps\spacetimedb-4d9e576cccc87aad.d: C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\lib.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\log_stopwatch.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\logger.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\rng.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\rt.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\table.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\../README.md
+
+C:\WebProjects\spacetimedb-openauthjs\.tmp\rust-check-target\debug\deps\libspacetimedb-4d9e576cccc87aad.rmeta: C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\lib.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\log_stopwatch.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\logger.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\rng.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\rt.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\table.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\../README.md
+
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\lib.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\log_stopwatch.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\logger.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\rng.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\rt.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\table.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-2.0.1\src\../README.md:

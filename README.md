@@ -1,10 +1,12 @@
 # SpacetimeDB Auth Demo
 
-A minimal SpacetimeDB app with OpenAuth: login, choose username, welcome screen, and logout.
+A SpacetimeDB app with a hardened OIDC password flow: verified-email registration,
+PKCE login, short-lived identity tokens, rotating refresh sessions, account recovery,
+username selection, and logout.
 
 - **Frontend:** React, TypeScript, Vite
 - **Backend:** SpacetimeDB (Rust/WASM)
-- **Auth:** OpenAuth (auth server in `auth/`)
+- **Auth:** OIDC/PKCE auth server in `auth/`
 
 ## Prerequisites
 
@@ -65,27 +67,41 @@ Open [http://localhost:5173](http://localhost:5173). Sign in, choose a username,
 - `NODE_ENV` - `development` or `production`
 - `PORT` - Auth server port (default: `4001`)
 - `ISSUER_URL` - Public base URL for OIDC issuer (required in production)
-- `JWT_PRIVATE_KEY` - Required
-- `JWT_PUBLIC_KEY` - Required
-- `DATABASE_URL` - Optional PostgreSQL URL (in-memory store is used if unset)
-- `BCRYPT_ROUNDS` - Optional, default `12`
-- `RESEND_API_KEY` - Required only if password reset email is enabled
-- `RESEND_FROM` - Sender identity for reset emails
-- `ALLOWED_ORIGINS` - Comma-separated list of allowed CORS origins (see below)
+- `AUTH_CLIENT_ID` - OIDC audience/client ID; use the same value for the client and module build
+- `JWT_PRIVATE_KEY` - Required in production
+- `JWT_PUBLIC_KEY` - Required in production and validated against the private key
+- `DATABASE_URL` - Required in production; development uses a protected JSON file
+- `RESEND_API_KEY` - Required in production for verification and recovery mail
+- `RESEND_FROM` - Required production sender identity
+- `ALLOWED_ORIGINS` - Required production HTTPS CORS origins (see below)
+- `ALLOWED_REDIRECT_URIS` - Optional exact callback URI allowlist
+- `TRUST_PROXY` - Set to `true` only behind a trusted proxy that overwrites forwarding headers
 
 Notes:
-- In Railway, `ISSUER_URL` can fall back to `RAILWAY_STATIC_URL`.
 - Generate JWT keys with `cd auth && npm run keys`.
+- Production startup fails closed when required security configuration is absent.
+- New passwords use scrypt. Existing bcrypt passwords are migrated after a successful login.
 
 ### CORS Whitelist
 
-The auth server only accepts requests from origins in its allowlist. In development, all `localhost` origins are permitted automatically. In production, set `ALLOWED_ORIGINS` in `auth/.env`:
+The auth server only accepts browser requests from its allowlist. Development permits
+HTTP localhost origins; production requires explicit HTTPS origins:
 
 ```env
 ALLOWED_ORIGINS=https://myapp.com,https://www.myapp.com
 ```
 
-If `ALLOWED_ORIGINS` is not set, the defaults are `http://localhost:5173` and `http://localhost:5176`. Add any additional origins (e.g. staging URLs) as a comma-separated list.
+Development defaults are `http://localhost:5173` and `http://localhost:5176`.
+Production has no permissive fallback.
+
+### Session security
+
+- Identity/access tokens expire after 15 minutes.
+- The refresh credential is stored only in a `HttpOnly`, `SameSite=Strict` cookie.
+- Refresh credentials rotate on every use, are hashed in storage, detect reuse,
+  expire after 7 idle days, and have a 30-day absolute lifetime.
+- Password reset consumes its token atomically and revokes every refresh session.
+- Registration requires email verification before an authorization code can be issued.
 
 ## Project Structure
 
@@ -107,7 +123,13 @@ If `ALLOWED_ORIGINS` is not set, the defaults are `http://localhost:5173` and `h
    ```bash
    npm run deploy:prod
    ```
-2. **Configure auth server env** (`ISSUER_URL`, JWT keys, optional `DATABASE_URL`, optional email vars).
+2. **Configure auth server env** (`ISSUER_URL`, PostgreSQL, JWT keys, Resend, and HTTPS origins).
+   Set the same issuer while compiling/publishing the SpacetimeDB module:
+   ```powershell
+   $env:AUTH_ISSUER_URL = "https://auth.example.com"
+   $env:AUTH_CLIENT_ID = "vibe-survival-game-client"
+   npm run deploy:prod
+   ```
 3. **Set client env** so `VITE_AUTH_SERVER_URL` points to your deployed auth URL.
 4. **Build and run services**:
    - Client: `npm run build`
@@ -116,6 +138,7 @@ If `ALLOWED_ORIGINS` is not set, the defaults are `http://localhost:5173` and `h
 ### Docker + Railway (optional)
 
 - Railway can use the root `Dockerfile`.
+- The production image runs as the unprivileged `node` user.
 - Before building, generate bindings:
   ```bash
   spacetime build -p ./server

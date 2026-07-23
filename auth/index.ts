@@ -14,34 +14,69 @@ if (process.env.NODE_ENV !== 'production') {
 const config = {
   isDevelopment: process.env.NODE_ENV !== 'production',
   port: parseInt(process.env.PORT || '4001'),
-  issuerUrl: process.env.ISSUER_URL || process.env.RAILWAY_STATIC_URL || 'http://localhost:4001',
+  issuerUrl: (process.env.ISSUER_URL || 'http://localhost:4001').replace(/\/+$/, ''),
   databaseUrl: process.env.DATABASE_URL,
   jwtPrivateKey: process.env.JWT_PRIVATE_KEY,
   jwtPublicKey: process.env.JWT_PUBLIC_KEY,
-  saltRounds: parseInt(process.env.BCRYPT_ROUNDS || '12'),
+  clientId: process.env.AUTH_CLIENT_ID || 'vibe-survival-game-client',
+  trustProxy: process.env.TRUST_PROXY === 'true',
   allowedOrigins: process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
     : ['http://localhost:5173', 'http://localhost:5176'],
 };
 
+function validateProductionConfig(): void {
+  if (config.isDevelopment) return;
+
+  const missing = [
+    !process.env.ISSUER_URL && 'ISSUER_URL',
+    !config.databaseUrl && 'DATABASE_URL',
+    !config.jwtPrivateKey && 'JWT_PRIVATE_KEY',
+    !config.jwtPublicKey && 'JWT_PUBLIC_KEY',
+    !process.env.ALLOWED_ORIGINS && 'ALLOWED_ORIGINS',
+    !process.env.RESEND_API_KEY && 'RESEND_API_KEY',
+    !process.env.RESEND_FROM && 'RESEND_FROM',
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    throw new Error(`Missing required production configuration: ${missing.join(', ')}`);
+  }
+
+  const issuer = new URL(config.issuerUrl);
+  if (issuer.protocol !== 'https:') throw new Error('ISSUER_URL must use HTTPS in production.');
+  if (issuer.username || issuer.password || issuer.search || issuer.hash) {
+    throw new Error('ISSUER_URL must not contain credentials, a query, or a fragment.');
+  }
+  for (const origin of config.allowedOrigins) {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== 'https:') throw new Error(`Production origin must use HTTPS: ${origin}`);
+    if (parsed.origin !== origin.replace(/\/$/, '')) throw new Error(`ALLOWED_ORIGINS entries must be origins: ${origin}`);
+  }
+  for (const redirectUri of process.env.ALLOWED_REDIRECT_URIS?.split(',').map((value) => value.trim()).filter(Boolean) ?? []) {
+    if (new URL(redirectUri).protocol !== 'https:') {
+      throw new Error(`Production redirect URI must use HTTPS: ${redirectUri}`);
+    }
+  }
+}
+
+validateProductionConfig();
+
 console.log(`[Config] Environment: ${config.isDevelopment ? 'development' : 'production'}`);
 console.log(`[Config] Port: ${config.port}`);
 console.log(`[Config] Issuer URL: ${config.issuerUrl}`);
-console.log(`[Config] Database: ${config.databaseUrl ? 'PostgreSQL' : 'In-memory'}`);
+console.log(`[Config] Database: ${config.databaseUrl ? 'PostgreSQL' : 'protected development JSON'}`);
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { serve } from '@hono/node-server';
-import { issuer } from '@openauthjs/openauth';
-import { PasswordProvider } from '@openauthjs/openauth/provider/password';
-import { MemoryStorage } from '@openauthjs/openauth/storage/memory';
-import { subjects } from './subjects.js';
+import { getConnInfo } from '@hono/node-server/conninfo';
 
 import { v4 as uuidv4 } from 'uuid';
-import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { Buffer } from 'buffer'; // Needed for PKCE base64
 import crypto from 'crypto'; // Needed for PKCE hash
 import { cors } from 'hono/cors';
+import { bodyLimit } from 'hono/body-limit';
+import { secureHeaders } from 'hono/secure-headers';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -49,17 +84,31 @@ import { fileURLToPath } from 'url';
 import { db, type UserRecord } from './database.js';
 import { initializeKeys, getPrivateKey, getPublicJWK, keyId } from './jwt-keys.js';
 import { Resend } from 'resend';
+import {
+  FixedWindowRateLimiter,
+  hashPassword,
+  isPasswordInputWithinLimit,
+  normalizeEmail,
+  privacyKey,
+  validatePassword,
+  verifyPassword,
+} from './security.js';
 
 /* -------------------------------------------------------------------------- */
 /* Config                                                                     */
 /* -------------------------------------------------------------------------- */
 const PORT        = config.port;
 const ISSUER_URL  = config.issuerUrl;
-const SALT_ROUNDS = config.saltRounds;
-const CLIENT_ID   = 'vibe-survival-game-client';
+const CLIENT_ID   = config.clientId;
 const PASSWORD_RESET_EXPIRY_MINUTES = 15;
-const ACCESS_TOKEN_EXPIRY_HOURS = 4;
-const REFRESH_TOKEN_EXPIRY_DAYS = 7;
+const EMAIL_VERIFICATION_EXPIRY_HOURS = 24;
+const ACCESS_TOKEN_EXPIRY_MINUTES = 15;
+const REFRESH_TOKEN_IDLE_EXPIRY_DAYS = 7;
+const REFRESH_TOKEN_MAX_EXPIRY_DAYS = 30;
+const MAX_FORM_BODY_BYTES = 64 * 1024;
+const REFRESH_COOKIE_NAME = config.isDevelopment ? 'oidc_refresh_dev' : '__Host-oidc_refresh';
+const rateLimiter = new FixedWindowRateLimiter();
+let dummyPasswordHash = '';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CLIENT_THEME_DIR_CANDIDATES = [
@@ -121,7 +170,7 @@ const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const resendFrom = process.env.RESEND_FROM || 'SpacetimeDB Auth Demo <noreply@example.com>';
 
 if (!resendApiKey) {
-  console.warn('[Config] RESEND_API_KEY not set - password reset emails will be logged to console only');
+  console.warn('[Config] RESEND_API_KEY not set - development email links will be logged to console');
 } else {
   console.log('[Config] Resend email service configured');
 }
@@ -131,144 +180,177 @@ if (!resendApiKey) {
 /* -------------------------------------------------------------------------- */
 
 async function _handlePasswordRegisterSimple(email: string, password?: string): Promise<{ id: string; email: string } | null> {
-  email = email.toLowerCase();
-  const existing = await db.getUserByEmail(email);
-  if (existing) {
-    console.warn(`[RegisterHandler] Email already taken: ${email}`);
-    return null; 
-  }
-  if (!password) {
-    console.error(`[RegisterHandler] Password missing for: ${email}`);
-    return null;
-  }
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !password || validatePassword(password)) return null;
+
+  // Hash before checking for duplicates to reduce registration-based email timing leaks.
+  const passwordHash = await hashPassword(password);
+  const existing = await db.getUserByEmail(normalizedEmail);
+  if (existing) return null;
+
   const userId = uuidv4();
-  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-  const newUser: UserRecord = { userId, email, passwordHash };
+  const newUser: UserRecord = {
+    userId,
+    email: normalizedEmail,
+    passwordHash,
+    emailVerified: false,
+  };
   const success = await db.createUser(newUser);
-  if (!success) {
-    console.warn(`[RegisterHandler] Failed to create user: ${email}`);
-    return null;
-  }
-  console.info(`[RegisterHandler] New user registered: ${email} -> ${userId}`);
-  return { id: userId, email };
+  if (!success) return null;
+  console.info(`[RegisterHandler] New unverified user registered: ${userId}`);
+  return { id: userId, email: normalizedEmail };
 }
 
 async function _handlePasswordLoginSimple(email: string, password?: string): Promise<{ id: string; email: string } | null> {
-  email = email.toLowerCase();
-  const user = await db.getUserByEmail(email);
-  if (!user || !password) {
-    console.warn(`[LoginHandler] User not found or password missing for: ${email}`);
-    return null;
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !password || !isPasswordInputWithinLimit(password)) return null;
+  const user = await db.getUserByEmail(normalizedEmail);
+  const verification = await verifyPassword(password, user?.passwordHash ?? dummyPasswordHash);
+  if (!user || !verification.valid || !user.emailVerified) return null;
+
+  if (verification.needsRehash) {
+    await db.updateUserPassword(user.userId, await hashPassword(password));
   }
-  const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) {
-    console.warn(`[LoginHandler] Incorrect password for: ${email}`);
-    return null;
+  console.info(`[LoginHandler] User logged in: ${user.userId}`);
+  return { id: user.userId, email: normalizedEmail };
+}
+
+function isTrustedOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.origin === new URL(ISSUER_URL).origin) return true;
+    if (config.allowedOrigins.includes(parsed.origin)) return true;
+    return config.isDevelopment
+      && parsed.protocol === 'http:'
+      && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+  } catch {
+    return false;
   }
-  console.info(`[LoginHandler] User logged in: ${email} -> ${user.userId}`);
-  return { id: user.userId, email };
 }
 
-async function _handlePasswordChangeSimple(userId: string, newPassword?: string): Promise<boolean> {
-  if (!newPassword) return false;
-  const newPasswordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-  const success = await db.updateUserPassword(userId, newPasswordHash);
-  if (success) {
-    console.info(`[ChangeHandler] Password changed for userId: ${userId}`);
-  }
-  return success;
-}
-
-// Placeholder sendCode function
-async function handlePasswordSendCode(email: string, code: string): Promise<void> { 
-  console.info(`[SendCodeHandler] Code for ${email}: ${code} (Manual Flow)`);
-}
-
-/* -------------------------------------------------------------------------- */
-/* Provider Handler Wrappers (Match expected signatures)                      */
-/* -------------------------------------------------------------------------- */
-
-type PasswordFlowRequest = Request & {
-  fail?: (value: Record<string, string>) => Response;
-  success?: (value: unknown) => Response;
-};
-
-async function handlePasswordRegister(ctx: PasswordFlowRequest, state: unknown, form?: FormData): Promise<Response> {
-    void state;
-    const email = form?.get('email') as string | undefined;
-    const password = form?.get('password') as string | undefined;
-    if (!email || !password) {
-        return ctx.fail ? ctx.fail({ error: 'invalid_request' }) : new Response('Missing email or password', { status: 400 });
-    }
-    const result = await _handlePasswordRegisterSimple(email, password);
-    if (!result) {
-        return ctx.fail ? ctx.fail({ error: 'registration_failed' }) : new Response('Registration failed', { status: 400 });
-    }
-    return ctx.success ? ctx.success({ user: result }) : new Response(JSON.stringify(result), { status: 200 });
-}
-
-async function handlePasswordLogin(ctx: PasswordFlowRequest, form?: FormData): Promise<Response> {
-    const email = form?.get('email') as string | undefined;
-    const password = form?.get('password') as string | undefined;
-     if (!email || !password) {
-        return ctx.fail ? ctx.fail({ error: 'invalid_request' }) : new Response('Missing email or password', { status: 400 });
-    }
-    const result = await _handlePasswordLoginSimple(email, password);
-    if (!result) {
-        return ctx.fail ? ctx.fail({ error: 'invalid_credentials' }) : new Response('Login failed', { status: 401 });
-    }
-    return ctx.success ? ctx.success({ user: result }) : new Response(JSON.stringify(result), { status: 200 });
-}
-
-async function handlePasswordChange(ctx: PasswordFlowRequest, state: unknown, form?: FormData): Promise<Response> {
-    const userId = typeof state === 'object' && state !== null && 'userId' in state && typeof state.userId === 'string'
-      ? state.userId
-      : undefined;
-    const newPassword = form?.get('password') as string | undefined;
-    if (!userId || !newPassword) {
-       return ctx.fail ? ctx.fail({ error: 'invalid_request' }) : new Response('Missing user context or new password', { status: 400 });
-    }
-    const success = await _handlePasswordChangeSimple(userId, newPassword);
-    if (!success) {
-        return ctx.fail ? ctx.fail({ error: 'change_failed' }) : new Response('Password change failed', { status: 400 });
-    }
-    return ctx.success ? ctx.success({}) : new Response('Password changed', { status: 200 }); 
-}
-
-/* -------------------------------------------------------------------------- */
-/* Provider Setup                                                             */
-/* -------------------------------------------------------------------------- */
-const password = PasswordProvider({
-  register: handlePasswordRegister,
-  login: handlePasswordLogin,
-  change: handlePasswordChange,
-  sendCode: handlePasswordSendCode,
-});
-
-/* -------------------------------------------------------------------------- */
-/* Success callback                                                           */
-/* -------------------------------------------------------------------------- */
-interface AuthSuccessResponder {
-  subject(type: 'user', properties: { userId: string }): Promise<Response>;
-}
-
-async function success(response: AuthSuccessResponder, value: unknown): Promise<Response> {
-  const email = typeof value === 'object' && value !== null && 'email' in value && typeof value.email === 'string'
-    ? value.email.toLowerCase()
+function rejectUntrustedBrowserOrigin(c: Context, requireOrigin = false): Response | null {
+  const origin = c.req.header('Origin');
+  return (!origin && requireOrigin) || (origin && !isTrustedOrigin(origin))
+    ? c.json({ error: 'invalid_request' }, 403)
     : null;
-  if (!email) return new Response('Invalid password identity', { status: 400 });
+}
 
-  const user = await db.getUserByEmail(email);
-  if (!user) return new Response('Account is not registered for this client', { status: 403 });
+function clientRateLimitKey(c: Context): string {
+  const directAddress = getConnInfo(c).remote.address ?? 'unknown-client';
+  if (!config.trustProxy) return privacyKey(directAddress);
 
-  return response.subject('user', { userId: user.userId });
+  const forwardedAddress = c.req.header('CF-Connecting-IP')
+    || c.req.header('X-Real-IP')
+    || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim();
+  return privacyKey(forwardedAddress || directAddress);
+}
+
+function consumeRateLimit(
+  c: Context,
+  bucket: string,
+  subject: string,
+  limit: number,
+  windowMs: number
+): boolean {
+  const result = rateLimiter.consume(`${bucket}:${subject}`, limit, windowMs);
+  if (!result.allowed) {
+    c.header('Retry-After', String(result.retryAfterSeconds));
+    return false;
+  }
+  return true;
+}
+
+function refreshCookieOptions(expires?: Date) {
+  return {
+    httpOnly: true,
+    secure: !config.isDevelopment,
+    sameSite: 'Strict' as const,
+    path: '/',
+    expires,
+    maxAge: expires ? Math.max(0, Math.floor((expires.getTime() - Date.now()) / 1000)) : undefined,
+    priority: 'High' as const,
+  };
+}
+
+function setRefreshTokenCookie(c: Context, token: string, expires: Date): void {
+  setCookie(c, REFRESH_COOKIE_NAME, token, refreshCookieOptions(expires));
+}
+
+function clearRefreshTokenCookie(c: Context): void {
+  deleteCookie(c, REFRESH_COOKIE_NAME, refreshCookieOptions(new Date(0)));
+}
+
+function readRefreshToken(c: Context, formToken: FormDataEntryValue | null): string | null {
+  if (typeof formToken === 'string' && formToken.length > 0) return formToken;
+  return getCookie(c, REFRESH_COOKIE_NAME) ?? null;
+}
+
+async function issueEmailVerification(user: { id: string; email: string }, returnTo: string): Promise<void> {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_HOURS * 60 * 60 * 1000);
+  await db.storeEmailVerificationToken(token, user.id, expiresAt);
+
+  const verificationLink = `${ISSUER_URL}/auth/password/verify-email?token=${token}&return_to=${encodeURIComponent(returnTo)}`;
+  if (!resend) {
+    console.log(`[EmailVerification] DEV MODE - verification link: ${verificationLink}`);
+    return;
+  }
+
+  await resend.emails.send({
+    from: resendFrom,
+    to: user.email,
+    subject: 'Verify your SpacetimeDB Auth Demo email',
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <body style="font-family:system-ui,-apple-system,sans-serif;background:#1a1a2e;color:#fff;padding:40px 20px">
+        <div style="max-width:500px;margin:0 auto;background:#28283c;border-radius:16px;padding:40px">
+          <h1 style="color:#ff8c00">Verify your email</h1>
+          <p>Confirm this address before signing in.</p>
+          <a href="${verificationLink}" style="display:inline-block;background:#e67700;color:#fff;padding:14px 24px;text-decoration:none;border-radius:10px">Verify email</a>
+          <p style="opacity:.65;font-size:13px">This link expires in ${EMAIL_VERIFICATION_EXPIRY_HOURS} hours.</p>
+        </div>
+      </body>
+      </html>
+    `,
+  });
+}
+
+function issueSignedTokens(user: UserRecord, clientId: string) {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const basePayload = {
+    iss: ISSUER_URL,
+    sub: user.userId,
+    aud: clientId,
+    iat: issuedAt,
+    email: user.email,
+    email_verified: user.emailVerified,
+  };
+  const signOptions: jwt.SignOptions = {
+    algorithm: 'RS256',
+    expiresIn: `${ACCESS_TOKEN_EXPIRY_MINUTES}m`,
+    keyid: keyId,
+  };
+  const privateKey = getPrivateKey();
+  const idToken = jwt.sign({ ...basePayload, token_use: 'id' }, privateKey, {
+    ...signOptions,
+    jwtid: crypto.randomUUID(),
+  });
+  const accessToken = jwt.sign({ ...basePayload, token_use: 'access' }, privateKey, {
+    ...signOptions,
+    jwtid: crypto.randomUUID(),
+  });
+  return {
+    idToken,
+    accessToken,
+    expiresInSeconds: ACCESS_TOKEN_EXPIRY_MINUTES * 60,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
 /* Helper Functions for Password Reset Pages                                   */
 /* -------------------------------------------------------------------------- */
 const AUTH_SPOTLIGHT_SCRIPT = `
-<script defer>
 (function(){
   document.addEventListener('DOMContentLoaded',function(){
     var el=document.querySelector('.container');
@@ -302,7 +384,7 @@ const AUTH_SPOTLIGHT_SCRIPT = `
     });
   });
 })();
-</script>`;
+`;
 
 function renderAuthPageHead(title: string): string {
   return `
@@ -312,7 +394,7 @@ function renderAuthPageHead(title: string): string {
       <title>${title}</title>
       <link rel="stylesheet" href="/theme/uiTheme.css">
       <link rel="stylesheet" href="/theme/authPages.css">
-      ${AUTH_SPOTLIGHT_SCRIPT}
+      <script defer src="/auth-ui.js"></script>
   `;
 }
 
@@ -337,6 +419,19 @@ function sanitizeReturnTo(raw?: string): string {
   } catch {
     return defaultPath;
   }
+}
+
+function clientAppUrlFromReturnTo(returnTo?: string): string {
+  try {
+    const loginUrl = new URL(sanitizeReturnTo(returnTo), ISSUER_URL);
+    const redirectUri = decodeRedirectUri(loginUrl.searchParams.get('redirect_uri') ?? '');
+    if (redirectUri && allowedRedirectUris.has(redirectUri)) {
+      return `${new URL(redirectUri).origin}/`;
+    }
+  } catch {
+    // Fall through to the configured client.
+  }
+  return config.allowedOrigins[0] ? `${config.allowedOrigins[0].replace(/\/$/, '')}/` : `${ISSUER_URL}/`;
 }
 
 function renderForgotPasswordPage(opts: { error?: string; success?: string; returnTo?: string } = {}): string {
@@ -374,6 +469,37 @@ function renderForgotPasswordPage(opts: { error?: string; success?: string; retu
   `;
 }
 
+function renderVerificationRequestPage(opts: { success?: string; returnTo?: string } = {}): string {
+  const returnTo = sanitizeReturnTo(opts.returnTo);
+  const safeReturnTo = escapeHtml(returnTo);
+  return `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>${renderAuthPageHead('Verify Email - SpacetimeDB Auth Demo')}</head>
+  <body>
+    <div class="container">
+      <div class="game-title"><span>SpacetimeDB Auth Demo</span></div>
+      <h1 class="form-title">Verify Email</h1>
+      ${opts.success
+        ? `<div class="success-message">${escapeHtml(opts.success)}</div>`
+        : `
+          <p class="form-description">Enter your email to request a fresh verification link.</p>
+          <form method="post">
+            <input type="hidden" name="return_to" value="${safeReturnTo}">
+            <div class="form-group">
+              <label for="email">Email Address</label>
+              <input id="email" name="email" type="email" autocomplete="email" required>
+            </div>
+            <button type="submit" class="submit-button">Send Verification Link</button>
+          </form>
+        `}
+      <div class="divider"></div>
+      <p class="form-link"><a href="${safeReturnTo}">Sign In</a></p>
+    </div>
+  </body>
+  </html>`;
+}
+
 function renderResetPasswordPage(opts: { token?: string; email?: string; error?: string; returnTo?: string } = {}): string {
   const { token, email, error, returnTo = '/auth/password/login' } = opts;
   const showForm = token && !error?.includes('Invalid') && !error?.includes('expired') && !error?.includes('already been used');
@@ -399,11 +525,11 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
               <input type="hidden" name="return_to" value="${safeReturnTo}">
               <div class="form-group">
                   <label for="password">New Password</label>
-                  <input id="password" name="password" type="password" autocomplete="new-password" required placeholder="Enter new password" minlength="6">
+                  <input id="password" name="password" type="password" autocomplete="new-password" required placeholder="Enter new password" minlength="15" maxlength="128">
               </div>
               <div class="form-group">
                   <label for="confirm_password">Confirm Password</label>
-                  <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required placeholder="Confirm new password" minlength="6">
+                  <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required placeholder="Confirm new password" minlength="15" maxlength="128">
               </div>
               <button type="submit" class="submit-button">Reset Password</button>
           </form>
@@ -416,6 +542,31 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   `;
 }
 
+function renderStatusPage(opts: {
+  title: string;
+  message: string;
+  returnTo?: string;
+  actionLabel?: string;
+  error?: boolean;
+}): string {
+  const returnTo = sanitizeReturnTo(opts.returnTo);
+  const actionUrl = clientAppUrlFromReturnTo(returnTo);
+  return `
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>${renderAuthPageHead(`${opts.title} - SpacetimeDB Auth Demo`)}</head>
+  <body>
+    <div class="container">
+      <div class="game-title"><span>SpacetimeDB Auth Demo</span></div>
+      <h1 class="form-title">${escapeHtml(opts.title)}</h1>
+      <div class="${opts.error ? 'error-message' : 'success-message'}">${escapeHtml(opts.message)}</div>
+      <div class="divider"></div>
+      <p class="form-link"><a href="${escapeHtml(actionUrl)}">${escapeHtml(opts.actionLabel ?? 'Return to App')}</a></p>
+    </div>
+  </body>
+  </html>`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Server                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -423,15 +574,63 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   // Initialize database and keys
   await db.init();
   await initializeKeys();
+  dummyPasswordHash = await hashPassword(crypto.randomBytes(32).toString('base64url'));
 
-  const storage = MemoryStorage();
-  const auth = issuer({ 
-    providers: { password }, 
-    subjects, 
-    storage, 
-    success,
-  });
   const app  = new Hono();
+
+  app.use('*', secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'none'"],
+      connectSrc: ["'self'", 'https:', 'wss:', ...(config.isDevelopment ? ['http:', 'ws:'] : [])],
+      fontSrc: ["'self'", 'data:'],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      objectSrc: ["'none'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      workerSrc: ["'self'"],
+      ...(config.isDevelopment ? {} : { upgradeInsecureRequests: [] }),
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,
+    referrerPolicy: 'no-referrer',
+    strictTransportSecurity: config.isDevelopment ? false : 'max-age=63072000; includeSubDomains; preload',
+    xFrameOptions: 'DENY',
+    permissionsPolicy: {
+      camera: [],
+      geolocation: [],
+      microphone: [],
+      payment: [],
+      usb: [],
+    },
+  }));
+  app.use('*', bodyLimit({
+    maxSize: MAX_FORM_BODY_BYTES,
+    onError: (c) => c.json({ error: 'request_too_large' }, 413),
+  }));
+  app.use('/token', async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    await next();
+  });
+  app.use('/revoke', async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    await next();
+  });
+  app.use('/auth/password/*', async (c, next) => {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    await next();
+  });
+
+  app.get('/auth-ui.js', (c) => {
+    c.header('Content-Type', 'application/javascript; charset=utf-8');
+    c.header('Cache-Control', 'public, max-age=3600');
+    return c.body(AUTH_SPOTLIGHT_SCRIPT);
+  });
 
   // --- Static File Serving for favicon ---
   app.get('/favicon.png', async (c) => {
@@ -540,16 +739,10 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   });
 
   // --- CORS Middleware ---
-  const allowedOrigins = config.allowedOrigins;
   app.use('*', cors({
       origin: (origin) => {
-        if (!origin) return allowedOrigins[0];
-        try {
-          const u = new URL(origin);
-          if ((u.hostname === 'localhost' || u.hostname === '127.0.0.1') && u.protocol === 'http:') return origin;
-          if (allowedOrigins.includes(origin)) return origin;
-        } catch { /* ignore */ }
-        return allowedOrigins[0];
+        if (!origin) return undefined;
+        return isTrustedOrigin(origin) ? origin : undefined;
       },
       allowMethods: ['GET', 'POST', 'OPTIONS'],
       allowHeaders: ['Content-Type', 'Authorization'],
@@ -569,6 +762,8 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
           subject_types_supported: ["public"],
           id_token_signing_alg_values_supported: ["RS256"],
           grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          claims_supported: ["iss", "sub", "aud", "iat", "exp", "email", "email_verified"],
       });
   });
 
@@ -589,7 +784,7 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   });
 
   // --- Custom Authorize Interceptor --- 
-  app.get('/authorize', async (c, next) => {
+  app.get('/authorize', (c) => {
       const query = c.req.query();
       const acrValues = query['acr_values'];
 
@@ -609,13 +804,8 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
           });
           
           return c.redirect(loginUrl.toString(), 302);
-      } else {
-          console.log('[AuthServer] /authorize request is not for password flow (acr_values != \'pwd\') or acr_values missing. Passing to issuer.');
-          await next(); 
-          if (!c.res.bodyUsed) {
-              console.warn('[AuthServer] /authorize interceptor: next() called but no response generated. Potential issue with issuer routing.');
-          }
       }
+      return c.json({ error: 'invalid_request' }, 400);
   });
 
   // --- Manual Password Routes --- 
@@ -659,7 +849,7 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
                 
                 <div class="form-group">
                     <label for="password">Password</label>
-                    <input id="password" name="password" type="password" autocomplete="new-password" required placeholder="Create a password">
+                    <input id="password" name="password" type="password" autocomplete="new-password" required minlength="15" maxlength="128" placeholder="Use at least 15 characters">
                 </div>
                 
                 <button type="submit" class="submit-button">Create Account</button>
@@ -675,9 +865,21 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   });
 
   app.post('/auth/password/register', async (c) => {
+    const originError = rejectUntrustedBrowserOrigin(c, true);
+    if (originError) return originError;
+    if (!consumeRateLimit(c, 'register-ip', clientRateLimitKey(c), 10, 60 * 60 * 1000)) {
+      return c.html(renderStatusPage({
+        title: 'Please Slow Down',
+        message: 'Too many registration attempts. Please try again later.',
+        error: true,
+      }), 429);
+    }
+
     const form = await c.req.formData();
-    const email = form.get('email') as string | undefined;
-    const password = form.get('password') as string | undefined;
+    const emailEntry = form.get('email');
+    const passwordEntry = form.get('password');
+    const email = typeof emailEntry === 'string' ? normalizeEmail(emailEntry) : null;
+    const password = typeof passwordEntry === 'string' ? passwordEntry : null;
     const redirect_uri_from_form = form.get('redirect_uri') as string | undefined;
     const state = form.get('state') as string | undefined;
     const code_challenge = form.get('code_challenge') as string | undefined;
@@ -685,71 +887,47 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
     const client_id = form.get('client_id') as string | undefined;
 
     if (!email || !password || !redirect_uri_from_form || !code_challenge || !code_challenge_method || !client_id) {
-         console.error('[AuthServer] POST Register: Missing form data.');
-         return c.text('Missing required form fields.', 400);
+         return c.text('Invalid registration request.', 400);
+    }
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      return c.html(renderStatusPage({
+        title: 'Choose a Stronger Password',
+        message: passwordError,
+        returnTo: `/auth/password/register?redirect_uri=${encodeURIComponent(redirect_uri_from_form)}&state=${encodeURIComponent(state ?? '')}&code_challenge=${encodeURIComponent(code_challenge)}&code_challenge_method=${encodeURIComponent(code_challenge_method)}&client_id=${encodeURIComponent(client_id)}`,
+        actionLabel: 'Return to Sign In',
+        error: true,
+      }), 400);
+    }
+    if (!consumeRateLimit(c, 'register-account', privacyKey(email), 3, 60 * 60 * 1000)) {
+      return c.html(renderStatusPage({
+        title: 'Check Your Inbox',
+        message: 'If this address can be registered, verification instructions will arrive shortly.',
+      }));
     }
 
     const redirect_uri = decodeRedirectUri(redirect_uri_from_form);
     if (!isValidAuthorizationRequest(client_id, redirect_uri, code_challenge, code_challenge_method)) {
-        console.error('[AuthServer] POST Register: Invalid client, redirect URI, or PKCE parameters.');
         return c.text('Invalid authorization request.', 400);
     }
 
+    const loginReturnTo = `/auth/password/login?redirect_uri=${encodeURIComponent(redirect_uri_from_form)}&state=${encodeURIComponent(state ?? '')}&code_challenge=${encodeURIComponent(code_challenge)}&code_challenge_method=${encodeURIComponent(code_challenge_method)}&client_id=${encodeURIComponent(client_id)}`;
     const userResult = await _handlePasswordRegisterSimple(email, password);
 
     if (userResult) {
-        const userId = userResult.id;
-        const code = uuidv4();
-        await db.storeAuthCode(code, { userId, codeChallenge: code_challenge, codeChallengeMethod: code_challenge_method, clientId: client_id, redirectUri: redirect_uri });
         try {
-            const redirect = new URL(redirect_uri);
-            redirect.searchParams.set('code', code);
-            if (state) redirect.searchParams.set('state', state);
-            console.log(`[AuthServer] POST Register Success: Redirecting to ${redirect.toString()}`);
-            return c.redirect(redirect.toString(), 302);
-        } catch (e) {
-            console.error('[AuthServer] POST Register: Failed to construct redirect URL with double-decoded URI:', redirect_uri, e);
-            return c.text('Invalid redirect URI provided.', 500);
+          await issueEmailVerification(userResult, loginReturnTo);
+        } catch (error) {
+          console.error('[EmailVerification] Failed to send verification email:', error);
         }
-    } else {
-        console.warn(`[AuthServer] POST Register Failed for email: ${email} (Email likely taken)`);
-        // Return error page with form
-        return c.html(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <link rel="icon" type="image/png" href="/favicon.png">
-            <title>Create Account - SpacetimeDB Auth Demo</title>
-            <link rel="stylesheet" href="/theme/uiTheme.css">
-            <link rel="stylesheet" href="/theme/authPages.css">
-            ${AUTH_SPOTLIGHT_SCRIPT}
-        </head>
-        <body>
-            <div class="container">
-                <div class="game-title">
-                    <span>SpacetimeDB Auth Demo</span>
-                </div>
-                <h1 class="form-title">Create Account</h1>
-                <p class="error-message">Registration failed. That email might already be taken.</p>
-                <form method="post">
-                     <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri_from_form)}">
-                     <input type="hidden" name="state" value="${escapeHtml(state || '')}">
-                     <input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
-                     <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method)}">
-                     <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
-                     <div class="form-group"><label for="email">Email Address</label><input id="email" name="email" type="email" value="${escapeHtml(email || '')}" required></div>
-                     <div class="form-group"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="new-password" required></div>
-                     <button type="submit" class="submit-button">Create Account</button>
-                </form>
-                <div class="divider"></div>
-                <p class="form-link">Already have an account? <a href="/auth/password/login">Sign In</a></p>
-            </div>
-        </body>
-        </html>
-        `);
     }
+
+    // The response deliberately does not reveal whether the address already exists.
+    return c.html(renderStatusPage({
+      title: 'Check Your Inbox',
+      message: 'If this address can be registered, verification instructions will arrive shortly.',
+      returnTo: loginReturnTo,
+    }));
   });
 
   app.get('/auth/password/login', (c) => {
@@ -792,12 +970,13 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
                 
                 <div class="form-group">
                     <label for="password">Password</label>
-                    <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Enter your password">
+                    <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="128" placeholder="Enter your password">
                 </div>
                 
                 <button type="submit" class="submit-button">Sign In</button>
                 
                 <p class="form-link" style="margin-top: -15px; margin-bottom: 0;"><a href="/auth/password/forgot?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Forgot Password?</a></p>
+                <p class="form-link"><a href="/auth/password/resend-verification?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Resend verification email</a></p>
             </form>
             
             <div class="divider"></div>
@@ -810,9 +989,21 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   });
 
   app.post('/auth/password/login', async (c) => {
+      const originError = rejectUntrustedBrowserOrigin(c, true);
+      if (originError) return originError;
+      if (!consumeRateLimit(c, 'login-ip', clientRateLimitKey(c), 30, 15 * 60 * 1000)) {
+          return c.html(renderStatusPage({
+            title: 'Please Slow Down',
+            message: 'Too many sign-in attempts. Please wait before trying again.',
+            error: true,
+          }), 429);
+      }
+
       const form = await c.req.formData();
-      const email = form.get('email') as string | undefined;
-      const password = form.get('password') as string | undefined;
+      const emailEntry = form.get('email');
+      const passwordEntry = form.get('password');
+      const email = typeof emailEntry === 'string' ? normalizeEmail(emailEntry) : null;
+      const password = typeof passwordEntry === 'string' ? passwordEntry : null;
       const redirect_uri_from_form = form.get('redirect_uri') as string | undefined;
       const state = form.get('state') as string | undefined;
       const code_challenge = form.get('code_challenge') as string | undefined;
@@ -820,19 +1011,26 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
       const client_id = form.get('client_id') as string | undefined;
 
       if (!email || !password || !redirect_uri_from_form || !code_challenge || !code_challenge_method || !client_id) {
-           console.error('[AuthServer] POST Login: Missing form data.');
            return c.text('Missing required form fields.', 400);
+      }
+      const accountLimitKey = privacyKey(email);
+      if (!consumeRateLimit(c, 'login-account', accountLimitKey, 10, 15 * 60 * 1000)) {
+          return c.html(renderStatusPage({
+            title: 'Please Slow Down',
+            message: 'Too many sign-in attempts. Please wait before trying again.',
+            error: true,
+          }), 429);
       }
 
       const redirect_uri = decodeRedirectUri(redirect_uri_from_form);
       if (!isValidAuthorizationRequest(client_id, redirect_uri, code_challenge, code_challenge_method)) {
-          console.error('[AuthServer] POST Login: Invalid client, redirect URI, or PKCE parameters.');
           return c.text('Invalid authorization request.', 400);
       }
 
       const userResult = await _handlePasswordLoginSimple(email, password);
 
       if (userResult) {
+          rateLimiter.reset(`login-account:${accountLimitKey}`);
           const userId = userResult.id;
           const code = uuidv4();
           await db.storeAuthCode(code, { userId, codeChallenge: code_challenge, codeChallengeMethod: code_challenge_method, clientId: client_id, redirectUri: redirect_uri });
@@ -840,14 +1038,13 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
               const redirect = new URL(redirect_uri);
               redirect.searchParams.set('code', code);
               if (state) redirect.searchParams.set('state', state);
-              console.log(`[AuthServer] POST Login Success: Redirecting to ${redirect.toString()}`);
+              console.log('[AuthServer] Password login succeeded; returning an authorization code.');
               return c.redirect(redirect.toString(), 302);
           } catch (e) {
               console.error('[AuthServer] POST Login: Failed to construct redirect URL with double-decoded URI:', redirect_uri, e);
               return c.text('Invalid redirect URI provided.', 500);
           }
       } else {
-          console.warn(`[AuthServer] POST Login Failed for email: ${email}`);
           const query = { redirect_uri: redirect_uri_from_form, state, code_challenge, code_challenge_method, client_id };
           const queryString = Object.entries(query)
               .filter(([, value]) => value != null)
@@ -858,13 +1055,7 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
             <!DOCTYPE html>
             <html lang="en">
             <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <link rel="icon" type="image/png" href="/favicon.png">
-                <title>Sign In - SpacetimeDB Auth Demo</title>
-                <link rel="stylesheet" href="/theme/uiTheme.css">
-                <link rel="stylesheet" href="/theme/authPages.css">
-                ${AUTH_SPOTLIGHT_SCRIPT}
+                ${renderAuthPageHead('Sign In - SpacetimeDB Auth Demo')}
             </head>
             <body>
                 <div class="container">
@@ -885,11 +1076,12 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
                         </div>
                         <div class="form-group">
                             <label for="password">Password</label>
-                            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Enter your password">
+                            <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="128" placeholder="Enter your password">
                         </div>
                         <button type="submit" class="submit-button">Sign In</button>
                         
                         <p class="form-link" style="margin-top: -15px; margin-bottom: 0;"><a href="/auth/password/forgot?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Forgot Password?</a></p>
+                        <p class="form-link"><a href="/auth/password/resend-verification?return_to=${encodeURIComponent(`/auth/password/login?${queryString}`)}">Resend verification email</a></p>
                     </form>
                     <div class="divider"></div>
                     <p class="form-link">Don't have an account? <a href="/auth/password/register?${queryString}">Create Account</a></p>
@@ -900,6 +1092,77 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
       }
   });
 
+  app.get('/auth/password/verify-email', async (c) => {
+    const returnTo = sanitizeReturnTo(c.req.query('return_to'));
+    if (!consumeRateLimit(c, 'verify-email-ip', clientRateLimitKey(c), 30, 15 * 60 * 1000)) {
+      return c.html(renderStatusPage({
+        title: 'Please Slow Down',
+        message: 'Too many verification attempts. Please try again later.',
+        returnTo,
+        error: true,
+      }), 429);
+    }
+
+    const token = c.req.query('token');
+    if (!token || !/^[a-f0-9]{64}$/i.test(token)) {
+      return c.html(renderStatusPage({
+        title: 'Invalid Verification Link',
+        message: 'Request a fresh verification email and try again.',
+        returnTo,
+        error: true,
+      }), 400);
+    }
+
+    const result = await db.consumeEmailVerificationToken(token);
+    if (result.status !== 'verified') {
+      return c.html(renderStatusPage({
+        title: 'Verification Link Unavailable',
+        message: 'This verification link is invalid, expired, or has already been used.',
+        returnTo,
+        error: true,
+      }), 400);
+    }
+
+    return c.html(renderStatusPage({
+      title: 'Email Verified',
+      message: 'Your email is verified. You can now sign in.',
+      returnTo,
+    }));
+  });
+
+  app.get('/auth/password/resend-verification', (c) => {
+    const returnTo = sanitizeReturnTo(c.req.query('return_to'));
+    return c.html(renderVerificationRequestPage({ returnTo }));
+  });
+
+  app.post('/auth/password/resend-verification', async (c) => {
+    const originError = rejectUntrustedBrowserOrigin(c, true);
+    if (originError) return originError;
+    const form = await c.req.formData();
+    const emailEntry = form.get('email');
+    const email = typeof emailEntry === 'string' ? normalizeEmail(emailEntry) : null;
+    const returnTo = sanitizeReturnTo(form.get('return_to') as string | undefined);
+    const genericMessage = 'If this account still needs verification, a new link will arrive shortly.';
+
+    if (
+      !email
+      || !consumeRateLimit(c, 'verify-resend-ip', clientRateLimitKey(c), 20, 60 * 60 * 1000)
+      || !consumeRateLimit(c, 'verify-resend-account', privacyKey(email ?? 'invalid'), 3, 60 * 60 * 1000)
+    ) {
+      return c.html(renderVerificationRequestPage({ success: genericMessage, returnTo }));
+    }
+
+    const user = await db.getUserByEmail(email);
+    if (user && !user.emailVerified) {
+      try {
+        await issueEmailVerification({ id: user.userId, email: user.email }, returnTo);
+      } catch (error) {
+        console.error('[EmailVerification] Failed to resend verification email:', error);
+      }
+    }
+    return c.html(renderVerificationRequestPage({ success: genericMessage, returnTo }));
+  });
+
   // --- Forgot Password Flow ---
   app.get('/auth/password/forgot', (c) => {
     const returnTo = sanitizeReturnTo(c.req.query('return_to'));
@@ -907,84 +1170,57 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
   });
 
   app.post('/auth/password/forgot', async (c) => {
+    const originError = rejectUntrustedBrowserOrigin(c, true);
+    if (originError) return originError;
     const form = await c.req.formData();
-    const email = (form.get('email') as string)?.toLowerCase()?.trim();
+    const emailEntry = form.get('email');
+    const email = typeof emailEntry === 'string' ? normalizeEmail(emailEntry) : null;
     const returnTo = sanitizeReturnTo(form.get('return_to') as string | undefined);
-
-    if (!email) {
-      return c.html(renderForgotPasswordPage({ error: 'Please enter your email address.', returnTo }));
-    }
-
-    // Check if user exists
-    const user = await db.getUserByEmail(email);
-    
-    // Always show success message to prevent email enumeration attacks
     const successHtml = renderForgotPasswordPage({ 
       success: 'If an account with that email exists, we\'ve sent a password reset link. Please check your inbox and spam folder.',
       returnTo
     });
+    if (
+      !email
+      || !consumeRateLimit(c, 'forgot-ip', clientRateLimitKey(c), 20, 60 * 60 * 1000)
+      || !consumeRateLimit(c, 'forgot-account', privacyKey(email ?? 'invalid'), 3, 60 * 60 * 1000)
+    ) return c.html(successHtml);
 
-    if (!user) {
-      console.log(`[ForgotPassword] No user found for email: ${email}`);
-      return c.html(successHtml);
+    const user = await db.getUserByEmail(email);
+    if (user?.emailVerified) {
+      void (async () => {
+        try {
+          const token = crypto.randomBytes(32).toString('hex');
+          const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY_MINUTES * 60 * 1000);
+          await db.storePasswordResetToken(token, user.userId, email, expiresAt);
+          const resetLink = `${ISSUER_URL}/auth/password/reset?token=${token}&return_to=${encodeURIComponent(returnTo)}`;
+
+          if (!resend) {
+            console.log(`[ForgotPassword] DEV MODE - reset link: ${resetLink}`);
+            return;
+          }
+          await resend.emails.send({
+            from: resendFrom,
+            to: email,
+            subject: 'Reset your SpacetimeDB Auth Demo password',
+            html: `
+              <!DOCTYPE html>
+              <html>
+              <body style="font-family:system-ui,-apple-system,sans-serif;background:#1a1a2e;color:#fff;padding:40px 20px">
+                <div style="max-width:500px;margin:0 auto;background:#28283c;border-radius:16px;padding:40px">
+                  <h1 style="color:#ff8c00">Reset Your Password</h1>
+                  <p>Use the link below to set a new password.</p>
+                  <a href="${resetLink}" style="display:inline-block;background:#e67700;color:#fff;padding:14px 24px;text-decoration:none;border-radius:10px">Reset Password</a>
+                  <p style="opacity:.65;font-size:13px">This link expires in ${PASSWORD_RESET_EXPIRY_MINUTES} minutes.</p>
+                </div>
+              </body>
+              </html>`,
+          });
+        } catch (error) {
+          console.error('[ForgotPassword] Failed to create or send reset email:', error);
+        }
+      })();
     }
-
-    // Generate secure token
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + PASSWORD_RESET_EXPIRY_MINUTES * 60 * 1000);
-
-    // Store token
-    await db.storePasswordResetToken(token, user.userId, email, expiresAt);
-
-    // Build reset link
-    const resetLink = `${ISSUER_URL}/auth/password/reset?token=${token}&return_to=${encodeURIComponent(returnTo)}`;
-
-    // Send email
-    if (resend) {
-      try {
-        await resend.emails.send({
-          from: resendFrom,
-          to: email,
-          subject: 'Reset your SpacetimeDB Auth Demo password',
-          html: `
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            </head>
-            <body style="font-family: system-ui, -apple-system, sans-serif; background-color: #1a1a2e; color: #ffffff; padding: 40px 20px; margin: 0;">
-              <div style="max-width: 500px; margin: 0 auto; background: rgba(40, 40, 60, 0.95); border-radius: 16px; padding: 40px; border: 2px solid rgba(255, 140, 0, 0.3);">
-                <h1 style="color: #ff8c00; margin-bottom: 20px; font-size: 24px;">Reset Your Password</h1>
-                <p style="color: rgba(255, 255, 255, 0.8); line-height: 1.6; margin-bottom: 30px;">
-                  You requested a password reset for your SpacetimeDB Auth Demo account. Click the button below to set a new password:
-                </p>
-                <a href="${resetLink}" style="display: inline-block; background: linear-gradient(135deg, #ff8c00 0%, #e67700 100%); color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
-                  Reset Password
-                </a>
-                <p style="color: rgba(255, 255, 255, 0.5); font-size: 13px; margin-top: 30px; line-height: 1.5;">
-                  This link will expire in ${PASSWORD_RESET_EXPIRY_MINUTES} minutes.<br><br>
-                  If you didn't request this reset, you can safely ignore this email.
-                </p>
-                <hr style="border: none; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 30px 0;">
-                <p style="color: rgba(255, 255, 255, 0.4); font-size: 12px;">
-                  SpacetimeDB Auth Demo
-                </p>
-              </div>
-            </body>
-            </html>
-          `
-        });
-        console.log(`[ForgotPassword] Reset email sent to: ${email}`);
-      } catch (err) {
-        console.error('[ForgotPassword] Failed to send email:', err);
-        // Still show success to user to prevent enumeration
-      }
-    } else {
-      // Development: Log the reset link to console
-      console.log(`[ForgotPassword] DEV MODE - Reset link for ${email}: ${resetLink}`);
-    }
-
     return c.html(successHtml);
   });
 
@@ -992,36 +1228,38 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
     const token = c.req.query('token');
     const returnTo = sanitizeReturnTo(c.req.query('return_to'));
 
-    if (!token) {
+    if (
+      !consumeRateLimit(c, 'reset-view-ip', clientRateLimitKey(c), 40, 15 * 60 * 1000)
+      || !token
+      || !/^[a-f0-9]{64}$/i.test(token)
+    ) {
       return c.html(renderResetPasswordPage({ error: 'Invalid or missing reset token.', returnTo }));
     }
 
-    // Validate token
     const resetToken = await db.getPasswordResetToken(token);
-    
-    if (!resetToken) {
-      return c.html(renderResetPasswordPage({ error: 'Invalid reset link. Please request a new one.', returnTo }));
-    }
-
-    if (resetToken.used) {
-      return c.html(renderResetPasswordPage({ error: 'This reset link has already been used. Please request a new one.', returnTo }));
-    }
-
-    if (new Date() > resetToken.expiresAt) {
-      return c.html(renderResetPasswordPage({ error: 'This reset link has expired. Please request a new one.', returnTo }));
+    if (!resetToken || resetToken.used || new Date() > resetToken.expiresAt) {
+      return c.html(renderResetPasswordPage({ error: 'This reset link is invalid, expired, or already used.', returnTo }));
     }
 
     return c.html(renderResetPasswordPage({ token, email: resetToken.email, returnTo }));
   });
 
   app.post('/auth/password/reset', async (c) => {
+    const originError = rejectUntrustedBrowserOrigin(c, true);
+    if (originError) return originError;
+    if (!consumeRateLimit(c, 'reset-submit-ip', clientRateLimitKey(c), 20, 15 * 60 * 1000)) {
+      return c.html(renderResetPasswordPage({ error: 'Too many reset attempts. Please try again later.' }), 429);
+    }
     const form = await c.req.formData();
-    const token = form.get('token') as string;
+    const tokenEntry = form.get('token');
+    const passwordEntry = form.get('password');
+    const confirmEntry = form.get('confirm_password');
+    const token = typeof tokenEntry === 'string' ? tokenEntry : '';
     const returnTo = sanitizeReturnTo(form.get('return_to') as string | undefined);
-    const password = form.get('password') as string;
-    const confirmPassword = form.get('confirm_password') as string;
+    const password = typeof passwordEntry === 'string' ? passwordEntry : '';
+    const confirmPassword = typeof confirmEntry === 'string' ? confirmEntry : '';
 
-    if (!token) {
+    if (!/^[a-f0-9]{64}$/i.test(token)) {
       return c.html(renderResetPasswordPage({ error: 'Invalid reset token.', returnTo }));
     }
 
@@ -1032,12 +1270,12 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
       return c.html(renderResetPasswordPage({ error: 'Invalid or expired reset link. Please request a new one.', returnTo }));
     }
 
-    // Validate password
-    if (!password || password.length < 6) {
+    const passwordError = validatePassword(password);
+    if (passwordError) {
       return c.html(renderResetPasswordPage({ 
         token, 
         email: resetToken.email, 
-        error: 'Password must be at least 6 characters long.',
+        error: passwordError,
         returnTo
       }));
     }
@@ -1051,223 +1289,164 @@ function renderResetPasswordPage(opts: { token?: string; email?: string; error?:
       }));
     }
 
-    // Update password
-    const newPasswordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    const updated = await db.updateUserPassword(resetToken.userId, newPasswordHash);
-
-    if (!updated) {
+    const result = await db.resetPasswordWithToken(token, await hashPassword(password));
+    if (result.status !== 'reset') {
       return c.html(renderResetPasswordPage({ 
-        token, 
-        email: resetToken.email, 
-        error: 'Failed to update password. Please try again.',
+        error: 'This reset link is invalid, expired, or already used.',
         returnTo
       }));
     }
 
-    // Mark token as used
-    await db.markPasswordResetTokenUsed(token);
+    clearRefreshTokenCookie(c);
+    console.log(`[ResetPassword] Password reset and all refresh sessions revoked for user: ${result.userId}`);
+    if (resend) {
+      void resend.emails.send({
+        from: resendFrom,
+        to: result.email,
+        subject: 'Your SpacetimeDB Auth Demo password was changed',
+        text: 'Your password was reset and all existing sessions were revoked. If this was not you, contact the application operator immediately.',
+      }).catch((error) => console.error('[ResetPassword] Failed to send confirmation email:', error));
+    }
 
-    console.log(`[ResetPassword] Password successfully reset for user: ${resetToken.userId}`);
-
-    // Show success page
-    return c.html(`
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        ${renderAuthPageHead('Password Reset - SpacetimeDB Auth Demo')}
-    </head>
-    <body>
-        <div class="container">
-            <div class="game-title">
-                <span style="font-size: 24px; font-weight: 700; color: white;">SpacetimeDB Auth Demo</span>
-            </div>
-            <div class="success-icon">✓</div>
-            <h1 class="form-title">Password Reset Successful!</h1>
-            <p class="form-description">Your password has been successfully updated. You can now sign in with your new password.</p>
-            <a href="${escapeHtml(returnTo)}" class="submit-button">Sign In</a>
-        </div>
-    </body>
-    </html>
-    `);
+    return c.html(renderStatusPage({
+      title: 'Password Reset Successful',
+      message: 'Your password was updated and all existing sessions were revoked.',
+      returnTo,
+    }));
   });
 
   // Token endpoint - Supports authorization_code and refresh_token grants
   app.post('/token', async c => {
+    const originError = rejectUntrustedBrowserOrigin(c);
+    if (originError) return originError;
+    if (!consumeRateLimit(c, 'token-ip', clientRateLimitKey(c), 120, 15 * 60 * 1000)) {
+      return c.json({ error: 'temporarily_unavailable' }, 429);
+    }
+
     const form = await c.req.formData();
     const grantType = form.get('grant_type');
     const clientIdForm = form.get('client_id');
 
-    if (typeof clientIdForm !== 'string') {
-      return c.text('invalid_request', 400);
+    if (clientIdForm !== CLIENT_ID) {
+      return c.json({ error: 'invalid_client' }, 400);
     }
 
     // --- Refresh token grant ---
     if (grantType === 'refresh_token') {
-      const refreshToken = form.get('refresh_token');
-      if (typeof refreshToken !== 'string') {
-        return c.text('invalid_request', 400);
+      const refreshToken = readRefreshToken(c, form.get('refresh_token'));
+      if (!refreshToken) {
+        clearRefreshTokenCookie(c);
+        return c.json({ error: 'invalid_grant' }, 400);
       }
 
-      const rtRecord = await db.getRefreshToken(refreshToken);
-      if (!rtRecord) {
-        console.error('[AuthServer] /token: Refresh token not found or expired.');
-        return c.text('invalid_grant', 400);
-      }
-      if (rtRecord.clientId !== clientIdForm) {
-        console.error('[AuthServer] /token: Client ID mismatch on refresh.');
-        return c.text('invalid_grant', 400);
-      }
-
-      // Rotate: delete used refresh token
-      await db.deleteRefreshToken(refreshToken);
-
-      const userId = rtRecord.userId;
-      const user = await db.getUserById(userId);
-      const userEmail = user?.email;
-
-      const payload = {
-        iss: ISSUER_URL,
-        sub: userId,
-        aud: clientIdForm,
-        iat: Math.floor(Date.now() / 1000),
-        email: userEmail,
-      };
-
-      const signOptions: jwt.SignOptions = {
-        algorithm: 'RS256',
-        expiresIn: `${ACCESS_TOKEN_EXPIRY_HOURS}h`,
-        keyid: keyId,
-      };
-
-      const privateKey = getPrivateKey();
-      const idToken = jwt.sign(payload, privateKey, signOptions);
-      const accessToken = idToken;
-      const expiresInSeconds = ACCESS_TOKEN_EXPIRY_HOURS * 60 * 60;
-
-      // Issue new refresh token (rotation)
       const newRefreshToken = crypto.randomBytes(48).toString('base64url');
-      const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-      await db.storeRefreshToken(newRefreshToken, userId, clientIdForm, refreshExpiresAt);
+      const newIdleExpiry = new Date(Date.now() + REFRESH_TOKEN_IDLE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+      const rotation = await db.rotateRefreshToken(refreshToken, clientIdForm, newRefreshToken, newIdleExpiry);
+      if (rotation.status !== 'rotated') {
+        clearRefreshTokenCookie(c);
+        if (rotation.status === 'reused') {
+          console.warn('[Token Endpoint] Refresh-token reuse detected; token family revoked.');
+        }
+        return c.json({ error: 'invalid_grant' }, 400);
+      }
 
-      console.log('[Token Endpoint] Refresh token used, new tokens issued for user:', userId);
-
+      const user = await db.getUserById(rotation.record.userId);
+      if (!user?.emailVerified) {
+        await db.revokeRefreshTokensForUser(rotation.record.userId);
+        clearRefreshTokenCookie(c);
+        return c.json({ error: 'invalid_grant' }, 400);
+      }
+      const tokens = issueSignedTokens(user, clientIdForm);
+      setRefreshTokenCookie(c, newRefreshToken, rotation.record.absoluteExpiresAt);
       return c.json({
-        access_token: accessToken,
-        id_token: idToken,
-        refresh_token: newRefreshToken,
+        access_token: tokens.accessToken,
+        id_token: tokens.idToken,
         token_type: 'Bearer',
-        expires_in: expiresInSeconds,
+        expires_in: tokens.expiresInSeconds,
       });
     }
 
     // --- Authorization code grant ---
     if (grantType !== 'authorization_code') {
-      return c.text('invalid_request', 400);
+      return c.json({ error: 'unsupported_grant_type' }, 400);
     }
 
     const code = form.get('code');
     const redirectUriForm = form.get('redirect_uri');
     const codeVerifier = form.get('code_verifier');
 
-    if (typeof code !== 'string' || typeof codeVerifier !== 'string') {
-      return c.text('invalid_request', 400);
+    if (
+      typeof code !== 'string'
+      || typeof codeVerifier !== 'string'
+      || !/^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)
+    ) {
+      return c.json({ error: 'invalid_request' }, 400);
     }
 
-    const codeData = await db.getAuthCode(code);
+    const codeData = await db.consumeAuthCode(code);
     if (!codeData) {
-      console.error(`[AuthServer] /token: Code ${code} not found.`);
-      return c.text('invalid_grant', 400);
+      return c.json({ error: 'invalid_grant' }, 400);
     }
 
-    let calculatedChallenge: string;
-    if (codeData.codeChallengeMethod === 'S256') {
-      const hash = crypto.createHash('sha256').update(codeVerifier).digest();
-      calculatedChallenge = Buffer.from(hash).toString('base64url');
-    } else {
-      calculatedChallenge = codeVerifier;
-      if (codeData.codeChallengeMethod !== 'plain') {
-        console.error(`[AuthServer] /token: Unsupported code_challenge_method: ${codeData.codeChallengeMethod}`);
-        return c.text('invalid_request', 400);
-      }
-    }
+    if (codeData.codeChallengeMethod !== 'S256') return c.json({ error: 'invalid_grant' }, 400);
+    const calculatedChallenge = Buffer.from(
+      crypto.createHash('sha256').update(codeVerifier).digest()
+    ).toString('base64url');
 
     if (calculatedChallenge !== codeData.codeChallenge) {
-      console.error(`[AuthServer] /token: PKCE verification failed.`);
-      await db.deleteAuthCode(code);
-      return c.text('invalid_grant', 400);
+      return c.json({ error: 'invalid_grant' }, 400);
     }
 
     if (clientIdForm !== codeData.clientId) {
-      console.error(`[AuthServer] /token: Client ID mismatch.`);
-      await db.deleteAuthCode(code);
-      return c.text('invalid_grant', 400);
+      return c.json({ error: 'invalid_grant' }, 400);
     }
 
     const redirectUri = typeof redirectUriForm === 'string' ? decodeRedirectUri(redirectUriForm) : null;
     if (!redirectUri || redirectUri !== codeData.redirectUri) {
-      console.error(`[AuthServer] /token: redirect_uri mismatch.`);
-      await db.deleteAuthCode(code);
-      return c.text('invalid_grant', 400);
+      return c.json({ error: 'invalid_grant' }, 400);
     }
 
     const userId = codeData.userId;
-    await db.deleteAuthCode(code);
-
     const user = await db.getUserById(userId);
-    const userEmail = user?.email;
+    if (!user?.emailVerified) return c.json({ error: 'invalid_grant' }, 400);
 
-    const payload = {
-      iss: ISSUER_URL,
-      sub: userId,
-      aud: clientIdForm,
-      iat: Math.floor(Date.now() / 1000),
-      email: userEmail,
-    };
-
-    const signOptions: jwt.SignOptions = {
-      algorithm: 'RS256',
-      expiresIn: `${ACCESS_TOKEN_EXPIRY_HOURS}h`,
-      keyid: keyId,
-    };
-
-    const privateKey = getPrivateKey();
-    const idToken = jwt.sign(payload, privateKey, signOptions);
-    const accessToken = idToken;
-    const expiresInSeconds = ACCESS_TOKEN_EXPIRY_HOURS * 60 * 60;
-
-    // Issue refresh token
+    const tokens = issueSignedTokens(user, clientIdForm);
     const refreshToken = crypto.randomBytes(48).toString('base64url');
-    const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-    await db.storeRefreshToken(refreshToken, userId, clientIdForm, refreshExpiresAt);
-
-    console.log('[Token Endpoint] Code verified. Tokens issued for user:', userId);
+    const familyId = crypto.randomUUID();
+    const idleExpiresAt = new Date(Date.now() + REFRESH_TOKEN_IDLE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+    const absoluteExpiresAt = new Date(Date.now() + REFRESH_TOKEN_MAX_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+    await db.storeRefreshToken(
+      refreshToken,
+      familyId,
+      userId,
+      clientIdForm,
+      idleExpiresAt,
+      absoluteExpiresAt
+    );
+    setRefreshTokenCookie(c, refreshToken, absoluteExpiresAt);
 
     return c.json({
-      access_token: accessToken,
-      id_token: idToken,
-      refresh_token: refreshToken,
+      access_token: tokens.accessToken,
+      id_token: tokens.idToken,
       token_type: 'Bearer',
-      expires_in: expiresInSeconds,
+      expires_in: tokens.expiresInSeconds,
     });
   });
 
-  // Revoke endpoint - invalidate refresh token (e.g. on logout)
+  // Revoke endpoint - invalidate the entire refresh-token family.
   app.post('/revoke', async c => {
+    const originError = rejectUntrustedBrowserOrigin(c);
+    if (originError) return originError;
+    if (!consumeRateLimit(c, 'revoke-ip', clientRateLimitKey(c), 120, 15 * 60 * 1000)) {
+      return c.json({ error: 'temporarily_unavailable' }, 429);
+    }
     const form = await c.req.formData();
-    const token = form.get('token');
-    const tokenTypeHint = form.get('token_type_hint');
-    if (typeof token !== 'string') {
-      return c.json({ error: 'invalid_request' }, 400);
-    }
-    if (tokenTypeHint === 'refresh_token') {
-      await db.deleteRefreshToken(token);
-      console.log('[Revoke] Refresh token revoked');
-    }
+    const token = readRefreshToken(c, form.get('token'));
+    if (token) await db.revokeRefreshTokenFamily(token);
+    clearRefreshTokenCookie(c);
     return c.json({});
   });
 
-  // Mount the OpenAuth issuer routes
-  app.route('/', auth);
   app.get('/health', c => c.text('OK'));
 
   // Serve client SPA (when running in Docker/Railway with client-dist)

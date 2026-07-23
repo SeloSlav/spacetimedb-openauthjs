@@ -155,6 +155,7 @@ export function WelcomeScreen() {
                 <input
                   type="text"
                   value={editUsername}
+                  maxLength={32}
                   onChange={(e) => setEditUsername(e.target.value)}
                   placeholder={myUsername ?? "Enter username"}
                   autoFocus
@@ -240,6 +241,7 @@ export function WelcomeScreen() {
               <div>
                 <textarea
                   value={editBio}
+                  maxLength={500}
                   onChange={(e) => setEditBio(e.target.value)}
                   placeholder="Tell us about yourself..."
                   rows={3}

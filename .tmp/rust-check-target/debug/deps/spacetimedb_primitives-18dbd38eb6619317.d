@@ -1,0 +1,9 @@
+C:\WebProjects\spacetimedb-openauthjs\.tmp\rust-check-target\debug\deps\spacetimedb_primitives-18dbd38eb6619317.d: C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\lib.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\attr.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\col_list.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\errno.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\ids.rs
+
+C:\WebProjects\spacetimedb-openauthjs\.tmp\rust-check-target\debug\deps\libspacetimedb_primitives-18dbd38eb6619317.rmeta: C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\lib.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\attr.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\col_list.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\errno.rs C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\ids.rs
+
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\lib.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\attr.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\col_list.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\errno.rs:
+C:\Users\Asus\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\spacetimedb-primitives-2.0.1\src\ids.rs:

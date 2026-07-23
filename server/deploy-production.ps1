@@ -6,6 +6,16 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $modulePath = $scriptDir
 $repoRoot = Split-Path -Parent $scriptDir
 $outDir = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\client\src\generated"))
+$authIssuerUrl = if ($env:AUTH_ISSUER_URL) { $env:AUTH_ISSUER_URL } else { $env:ISSUER_URL }
+if (-not $authIssuerUrl) {
+  throw "[SECURITY] Set AUTH_ISSUER_URL (or ISSUER_URL) to the production HTTPS auth issuer before publishing."
+}
+$parsedIssuer = $null
+if (-not [Uri]::TryCreate($authIssuerUrl, [UriKind]::Absolute, [ref]$parsedIssuer) -or $parsedIssuer.Scheme -ne "https") {
+  throw "[SECURITY] AUTH_ISSUER_URL must be an absolute HTTPS URL."
+}
+$env:AUTH_ISSUER_URL = $authIssuerUrl.TrimEnd("/")
+$env:AUTH_CLIENT_ID = if ($env:AUTH_CLIENT_ID) { $env:AUTH_CLIENT_ID } else { "vibe-survival-game-client" }
 
 function Assert-LastExit([string]$stepName) {
   if ($LASTEXITCODE -ne 0) {
@@ -21,7 +31,7 @@ spacetime publish --no-config --server maincloud -p . spacetimedb-auth-demo -y
 Assert-LastExit "Publish to maincloud"
 
 Write-Host "[GEN] Regenerating client bindings..." -ForegroundColor Yellow
-spacetime generate --no-config --include-private -p . -l typescript -o "$outDir" -y
+spacetime generate --no-config -p . -l typescript -o "$outDir" -y
 Assert-LastExit "Generate TypeScript bindings"
 
 Write-Host "[GIT] Committing and pushing to trigger deployment..." -ForegroundColor Yellow

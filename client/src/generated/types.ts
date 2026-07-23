@@ -10,6 +10,13 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AuthenticatedConnection = __t.object("AuthenticatedConnection", {
+  connectionId: __t.connectionId(),
+  identity: __t.identity(),
+  allowed: __t.bool(),
+});
+export type AuthenticatedConnection = __Infer<typeof AuthenticatedConnection>;
+
 export const User = __t.object("User", {
   identity: __t.identity(),
   username: __t.option(__t.string()),

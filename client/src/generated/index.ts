@@ -40,23 +40,19 @@ import SetUsernameReducer from "./set_username_reducer";
 // Import all procedure arg schemas
 
 // Import all table schema definitions
-import UserRow from "./user_table";
+import AuthenticatedUserDirectoryRow from "./authenticated_user_directory_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  user: __table({
-    name: 'user',
+  authenticated_user_directory: __table({
+    name: 'authenticated_user_directory',
     indexes: [
-      { name: 'identity', algorithm: 'btree', columns: [
-        'identity',
-      ] },
     ],
     constraints: [
-      { name: 'user_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
-  }, UserRow),
+  }, AuthenticatedUserDirectoryRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */

@@ -6,7 +6,7 @@ import * as jose from 'jose';
 let privateKey: string;
 let jwksPublicKey: jose.KeyLike;
 let jwksPublicJWK: jose.JWK;
-export const keyId = 'auth-server-signing-key';
+export let keyId = 'uninitialized';
 
 const DEV_KEYS_PATH = path.join(process.cwd(), '.dev-jwt-keys.json');
 
@@ -19,12 +19,34 @@ export async function initializeKeys(): Promise<void> {
   const privateKeyEnv = process.env.JWT_PRIVATE_KEY;
   const publicKeyEnv = process.env.JWT_PUBLIC_KEY;
 
+  if (process.env.NODE_ENV === 'production' && (!privateKeyEnv || !publicKeyEnv)) {
+    throw new Error('JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are required in production.');
+  }
+  if ((privateKeyEnv && !publicKeyEnv) || (!privateKeyEnv && publicKeyEnv)) {
+    throw new Error('JWT_PRIVATE_KEY and JWT_PUBLIC_KEY must be configured together.');
+  }
+
   if (privateKeyEnv && publicKeyEnv) {
     console.log('[Keys] Using environment variables for JWT keys');
     privateKey = privateKeyEnv.replace(/\\n/g, '\n');
     const publicKeyPem = publicKeyEnv.replace(/\\n/g, '\n');
+    const derivedPublicDer = crypto.createPublicKey(crypto.createPrivateKey(privateKey)).export({
+      type: 'spki',
+      format: 'der',
+    });
+    const configuredPublicDer = crypto.createPublicKey(publicKeyPem).export({
+      type: 'spki',
+      format: 'der',
+    });
+    if (
+      derivedPublicDer.length !== configuredPublicDer.length
+      || !crypto.timingSafeEqual(derivedPublicDer, configuredPublicDer)
+    ) {
+      throw new Error('JWT public key does not match JWT private key.');
+    }
     jwksPublicKey = await jose.importSPKI(publicKeyPem, 'RS256');
     jwksPublicJWK = await jose.exportJWK(jwksPublicKey);
+    keyId = await jose.calculateJwkThumbprint(jwksPublicJWK);
     console.log('[Keys] JWT keys loaded from environment');
     return;
   }
@@ -38,6 +60,7 @@ export async function initializeKeys(): Promise<void> {
       const publicKeyPem = parsed.publicKey.replace(/\\n/g, '\n');
       jwksPublicKey = await jose.importSPKI(publicKeyPem, 'RS256');
       jwksPublicJWK = await jose.exportJWK(jwksPublicKey);
+      keyId = await jose.calculateJwkThumbprint(jwksPublicJWK);
       console.log('[Keys] Loaded persisted dev keys (tokens survive auth server restarts)');
       return;
     }
@@ -55,6 +78,7 @@ export async function initializeKeys(): Promise<void> {
   privateKey = privKey;
   jwksPublicKey = await jose.importSPKI(pubKey, 'RS256');
   jwksPublicJWK = await jose.exportJWK(jwksPublicKey);
+  keyId = await jose.calculateJwkThumbprint(jwksPublicJWK);
 
   try {
     fs.writeFileSync(
@@ -84,4 +108,4 @@ export function getPublicJWK(): jose.JWK {
     throw new Error('JWT keys not initialized. Call initializeKeys() first.');
   }
   return jwksPublicJWK;
-} 
+}
