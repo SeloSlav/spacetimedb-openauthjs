@@ -156,6 +156,10 @@ npm run deploy:prod-clean    # Delete + republish production
 spacetime logs spacetimedb-auth-demo-local
 ```
 
+`deploy:prod-clean` is destructive and requires
+`CONFIRM_PRODUCTION_RESET=spacetimedb-auth-demo`. Production deploy scripts
+regenerate bindings but never stage, commit, or push Git changes.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE). You may use, modify, and distribute it under the terms of that license.

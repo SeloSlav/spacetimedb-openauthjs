@@ -4,7 +4,6 @@
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $modulePath = $scriptDir
-$repoRoot = Split-Path -Parent $scriptDir
 $outDir = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\client\src\generated"))
 $authIssuerUrl = if ($env:AUTH_ISSUER_URL) { $env:AUTH_ISSUER_URL } else { $env:ISSUER_URL }
 if (-not $authIssuerUrl) {
@@ -34,22 +33,7 @@ Write-Host "[GEN] Regenerating client bindings..." -ForegroundColor Yellow
 spacetime generate --no-config -p . -l typescript -o "$outDir" -y
 Assert-LastExit "Generate TypeScript bindings"
 
-Write-Host "[GIT] Committing and pushing to trigger deployment..." -ForegroundColor Yellow
-Set-Location $repoRoot
-git add .
-Assert-LastExit "git add"
-
-git diff --cached --quiet
-if ($LASTEXITCODE -ne 0) {
-  git commit -m "Deploy: Database update with latest changes"
-  Assert-LastExit "git commit"
-} else {
-  Write-Host "[GIT] No staged changes to commit; skipping commit." -ForegroundColor DarkYellow
-}
-
-git push
-Assert-LastExit "git push"
-
 Write-Host "[SUCCESS] Production deployment complete!" -ForegroundColor Green
 Write-Host "[DB] Database: spacetimedb-auth-demo on maincloud" -ForegroundColor Cyan
 Write-Host "[INFO] Database was updated (not wiped)" -ForegroundColor Blue
+Write-Host "[INFO] Review and commit regenerated bindings separately; this script never changes Git state." -ForegroundColor Blue

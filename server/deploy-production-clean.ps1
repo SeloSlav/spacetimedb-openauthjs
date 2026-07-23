@@ -4,7 +4,6 @@
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $modulePath = $scriptDir
-$repoRoot = Split-Path -Parent $scriptDir
 $outDir = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "..\client\src\generated"))
 $authIssuerUrl = if ($env:AUTH_ISSUER_URL) { $env:AUTH_ISSUER_URL } else { $env:ISSUER_URL }
 if (-not $authIssuerUrl) {
@@ -16,6 +15,9 @@ if (-not [Uri]::TryCreate($authIssuerUrl, [UriKind]::Absolute, [ref]$parsedIssue
 }
 $env:AUTH_ISSUER_URL = $authIssuerUrl.TrimEnd("/")
 $env:AUTH_CLIENT_ID = if ($env:AUTH_CLIENT_ID) { $env:AUTH_CLIENT_ID } else { "vibe-survival-game-client" }
+if ($env:CONFIRM_PRODUCTION_RESET -ne "spacetimedb-auth-demo") {
+  throw "[SAFETY] Set CONFIRM_PRODUCTION_RESET=spacetimedb-auth-demo to confirm the destructive production reset."
+}
 
 function Assert-LastExit([string]$stepName) {
   if ($LASTEXITCODE -ne 0) {
@@ -33,7 +35,7 @@ if ($deleteProc.ExitCode -ne 0) {
 }
 
 Write-Host "[BUILD] Building and deploying to fresh production database..." -ForegroundColor Yellow
-spacetime publish --no-config --server maincloud -p . selo-empire -y
+spacetime publish --no-config --server maincloud -p . spacetimedb-auth-demo -y
 if ($LASTEXITCODE -ne 0) {
   Write-Host "[ERROR] Publish failed. Ensure you are logged in: spacetime login" -ForegroundColor Red
   Write-Host "[ERROR] If this DB does not exist in your account, create it once in the SpacetimeDB dashboard." -ForegroundColor Red
@@ -44,22 +46,7 @@ Write-Host "[GEN] Regenerating client bindings..." -ForegroundColor Yellow
 spacetime generate --no-config -p . -l typescript -o "$outDir" -y
 Assert-LastExit "Generate TypeScript bindings"
 
-Write-Host "[GIT] Committing and pushing to trigger deployment..." -ForegroundColor Yellow
-Set-Location $repoRoot
-git add .
-Assert-LastExit "git add"
-
-git diff --cached --quiet
-if ($LASTEXITCODE -ne 0) {
-  git commit -m "Deploy: Clean database rebuild with new schema"
-  Assert-LastExit "git commit"
-} else {
-  Write-Host "[GIT] No staged changes to commit; skipping commit." -ForegroundColor DarkYellow
-}
-
-git push
-Assert-LastExit "git push"
-
 Write-Host "[SUCCESS] Clean production deployment complete!" -ForegroundColor Green
 Write-Host "[DB] Database: spacetimedb-auth-demo on maincloud" -ForegroundColor Cyan
 Write-Host "[CLEAN] Production database was completely wiped and recreated" -ForegroundColor Magenta
+Write-Host "[INFO] Review and commit regenerated bindings separately; this script never changes Git state." -ForegroundColor Blue
