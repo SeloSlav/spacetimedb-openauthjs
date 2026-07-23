@@ -8,7 +8,8 @@
     "dev": "cross-env NODE_ENV=development tsx watch index.ts",
     "build": "tsc",
     "keys": "node generate-keys.js",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "test:smoke:no-email": "npm run build && node tests/no-email-smoke.mjs"
   },
   "keywords": [],
   "author": "",

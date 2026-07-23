@@ -58,6 +58,10 @@ Open [http://localhost:5173](http://localhost:5173). Sign in, choose a username,
 - `VITE_AUTH_SERVER_URL` – Auth server URL (default: `http://localhost:4001` in dev)
 - `VITE_AUTH_CLIENT_ID` – OIDC client ID (default: `vibe-survival-game-client`)
 
+The auth server also accepts `AUTH_EMAIL_MODE=disabled` for immediate login without
+email, `console` for development links in logs, or `resend` for delivered
+verification and recovery.
+
 ## Project Structure
 
 ```
@@ -87,7 +91,9 @@ Deploy client and auth together to Railway:
 3. **Set environment variables** in Railway:
    - `ISSUER_URL` – Your Railway deployment URL (e.g. `https://your-app.up.railway.app`). Railway sets `RAILWAY_STATIC_URL` automatically.
    - `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` – From `cd auth && npm run keys`
-   - `DATABASE_URL` – PostgreSQL connection string (optional; uses in-memory if unset)
+   - `DATABASE_URL` – PostgreSQL connection string
+   - `AUTH_EMAIL_MODE` – `disabled` or `resend` in production
+   - `RESEND_API_KEY` / `RESEND_FROM` – Required only in `resend` mode
 
 4. **Build locally** (optional):
    ```bash
