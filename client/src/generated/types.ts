@@ -17,6 +17,14 @@ export const AuthenticatedConnection = __t.object("AuthenticatedConnection", {
 });
 export type AuthenticatedConnection = __Infer<typeof AuthenticatedConnection>;
 
+export const AuthenticatedConnectionExpiry = __t.object("AuthenticatedConnectionExpiry", {
+  scheduledId: __t.u64(),
+  scheduledAt: __t.scheduleAt(),
+  connectionId: __t.connectionId(),
+  identity: __t.identity(),
+});
+export type AuthenticatedConnectionExpiry = __Infer<typeof AuthenticatedConnectionExpiry>;
+
 export const User = __t.object("User", {
   identity: __t.identity(),
   username: __t.option(__t.string()),

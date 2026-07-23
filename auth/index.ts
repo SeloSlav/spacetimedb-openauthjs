@@ -913,11 +913,8 @@ function renderStatusPage(opts: {
     const userResult = await _handlePasswordRegisterSimple(email, password);
 
     if (userResult) {
-        try {
-          await issueEmailVerification(userResult, loginReturnTo);
-        } catch (error) {
-          console.error('[EmailVerification] Failed to send verification email:', error);
-        }
+      void issueEmailVerification(userResult, loginReturnTo)
+        .catch((error) => console.error('[EmailVerification] Failed to send verification email:', error));
     }
 
     // The response deliberately does not reveal whether the address already exists.
@@ -1152,11 +1149,8 @@ function renderStatusPage(opts: {
 
     const user = await db.getUserByEmail(email);
     if (user && !user.emailVerified) {
-      try {
-        await issueEmailVerification({ id: user.userId, email: user.email }, returnTo);
-      } catch (error) {
-        console.error('[EmailVerification] Failed to resend verification email:', error);
-      }
+      void issueEmailVerification({ id: user.userId, email: user.email }, returnTo)
+        .catch((error) => console.error('[EmailVerification] Failed to resend verification email:', error));
     }
     return c.html(renderVerificationRequestPage({ success: genericMessage, returnTo }));
   });
